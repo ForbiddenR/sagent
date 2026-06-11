@@ -163,6 +163,8 @@ const server = Bun.serve({
               role: "assistant",
               text: "",
               tools: [],
+              skills: [],
+              completed: false,
             };
             const send = (event: unknown) =>
               controller.enqueue(enc.encode(`data: ${JSON.stringify(event)}\n\n`));
@@ -170,8 +172,11 @@ const server = Bun.serve({
               for await (const event of agent.run(sessionId, message)) {
                 if (event.type === "token") assistantMessage.text += event.text;
                 else if (event.type === "tool") assistantMessage.tools.push(event.name);
-                else if (event.type === "done") assistantMessage.text = event.text || assistantMessage.text;
-                else if (event.type === "error") assistantMessage.error = event.message;
+                else if (event.type === "skill") assistantMessage.skills?.push(event.name);
+                else if (event.type === "done") {
+                  assistantMessage.text = event.text || assistantMessage.text;
+                  assistantMessage.completed = true;
+                } else if (event.type === "error") assistantMessage.error = event.message;
                 send(event);
               }
             } catch (err) {

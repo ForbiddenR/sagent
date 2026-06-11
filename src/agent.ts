@@ -19,6 +19,7 @@ const TOP_P = Number(process.env.TOP_P ?? "1");
 export type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string }
+  | { type: "skill"; name: string }
   | { type: "done"; text: string }
   | { type: "error"; message: string };
 
@@ -112,7 +113,12 @@ export function createAgent(allSkills: Skill[]) {
 
         // Execute each requested tool and feed results back.
         for (const call of toolCalls) {
-          yield { type: "tool", name: call.name };
+          if (call.name === "load_skill") {
+            const skillName = typeof call.args?.name === "string" ? call.args.name : "unknown";
+            yield { type: "skill", name: skillName };
+          } else {
+            yield { type: "tool", name: call.name };
+          }
           const selected = toolsByName.get(call.name);
           const result = selected
             ? String(await selected.invoke(call.args))

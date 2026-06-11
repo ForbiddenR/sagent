@@ -8,6 +8,8 @@ interface Message {
   role: "user" | "assistant";
   text: string;
   tools: string[];
+  skills?: string[];
+  completed?: boolean;
   error?: string;
 }
 
@@ -32,6 +34,7 @@ interface Skill extends SkillSummary {
 type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string }
+  | { type: "skill"; name: string }
   | { type: "done"; text: string }
   | { type: "error"; message: string };
 
@@ -267,8 +270,8 @@ function useAgentPage() {
     const assistantId = crypto.randomUUID();
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), role: "user", text, tools: [] },
-      { id: assistantId, role: "assistant", text: "", tools: [] },
+      { id: crypto.randomUUID(), role: "user", text, tools: [], completed: true },
+      { id: assistantId, role: "assistant", text: "", tools: [], skills: [], completed: false },
     ]);
     const patch = (fn: (m: Message) => Message) =>
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
@@ -297,15 +300,16 @@ function useAgentPage() {
           const event = JSON.parse(line.slice(5).trim()) as AgentEvent;
           if (event.type === "token") patch((m) => ({ ...m, text: m.text + event.text }));
           else if (event.type === "tool") patch((m) => ({ ...m, tools: [...m.tools, event.name] }));
-          else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text }));
-          else if (event.type === "error") patch((m) => ({ ...m, error: event.message }));
+          else if (event.type === "skill") patch((m) => ({ ...m, skills: [...(m.skills ?? []), event.name] }));
+          else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
+          else if (event.type === "error") patch((m) => ({ ...m, error: event.message, completed: true }));
         }
       }
       const latest = await refreshSessions();
       const current = latest.find((s) => s.id === sessionId);
       if (current) setActiveSessionId(current.id);
     } catch (err) {
-      patch((m) => ({ ...m, error: (err as Error).message }));
+      patch((m) => ({ ...m, error: (err as Error).message, completed: true }));
     } finally {
       setBusy(false);
     }
@@ -351,7 +355,21 @@ function useAgentPage() {
 // --- components -------------------------------------------------------------
 
 function ToolChip({ name }: { name: string }) {
-  return <div className="chip mb-1 inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">🔧 {name}</div>;
+  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">🔧 using tool: {name}</div>;
+}
+
+function SkillChip({ name }: { name: string }) {
+  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">📘 using skill: {name}</div>;
+}
+
+function StatusChip({ completed, hasError }: { completed?: boolean; hasError: boolean }) {
+  if (hasError) {
+    return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-red-300 bg-red-50 px-2 py-0.5 text-xs text-red-700">✗ stopped with error</div>;
+  }
+  if (completed) {
+    return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">✓ response completed</div>;
+  }
+  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> generating response…</div>;
 }
 
 function Bubble({ message }: { message: Message }) {
@@ -365,8 +383,12 @@ function Bubble({ message }: { message: Message }) {
     );
   }
   return (
-    <div className="flex flex-col items-start gap-0.5">
-      {message.tools.map((name, i) => <ToolChip key={i} name={name} />)}
+    <div className="flex flex-col items-start gap-1">
+      <div className="flex max-w-[85%] flex-wrap items-center gap-1">
+        <StatusChip completed={message.completed} hasError={Boolean(message.error)} />
+        {(message.skills ?? []).map((name, i) => <SkillChip key={`skill-${i}`} name={name} />)}
+        {message.tools.map((name, i) => <ToolChip key={`tool-${i}`} name={name} />)}
+      </div>
       {message.text && (
         <div className="bubble-assistant max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
           <MarkdownMessage text={message.text} />

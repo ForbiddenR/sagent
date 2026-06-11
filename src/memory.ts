@@ -5,6 +5,8 @@ export interface ClientMessage {
   role: "user" | "assistant";
   text: string;
   tools: string[];
+  skills?: string[];
+  completed?: boolean;
   error?: string;
 }
 
