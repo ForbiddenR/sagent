@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bun · LangChain Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = { theme: { extend: { borderRadius: { xl2: "1rem" } } } };
+    </script>
+    <style>
+      /* shadcn-ish neutral tokens */
+      :root {
+        --bg: #fafafa; --card: #ffffff; --border: #e4e4e7; --muted: #71717a;
+        --fg: #18181b; --primary: #18181b; --primary-fg: #fafafa; --accent: #f4f4f5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #09090b; --card: #18181b; --border: #27272a; --muted: #a1a1aa;
+          --fg: #fafafa; --primary: #fafafa; --primary-fg: #18181b; --accent: #27272a;
+        }
+      }
+      body { background: var(--bg); color: var(--fg); }
+      .card { background: var(--card); border-color: var(--border); }
+      .muted { color: var(--muted); }
+      .bubble-user { background: var(--primary); color: var(--primary-fg); }
+      .bubble-assistant { background: var(--accent); color: var(--fg); }
+      .btn-primary { background: var(--primary); color: var(--primary-fg); }
+      .field { background: var(--card); border-color: var(--border); color: var(--fg); }
+      .chip { background: var(--accent); color: var(--muted); border-color: var(--border); }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9999px; }
+    </style>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="./app.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "name": "bun-langchain-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@langchain/anthropic": "^0.3.0",
+    "@langchain/core": "^0.3.0",
+    "expr-eval": "^2.0.2",
+    "react": "^19",
+    "react-dom": "^19",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "bun-types": "latest",
+    "typescript": "^5.5.0"
+  }
+}
