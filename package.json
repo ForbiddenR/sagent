@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "bun src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile dist/agent-linux-x64"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",

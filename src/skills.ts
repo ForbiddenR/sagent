@@ -7,6 +7,12 @@ export interface Skill {
   body: string;
 }
 
+export interface SkillInput {
+  name: string;
+  description: string;
+  body: string;
+}
+
 /** Parse a tiny `--- key: value --- body` frontmatter block. */
 function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
   const match = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
@@ -21,6 +27,24 @@ function parseFrontmatter(raw: string): { meta: Record<string, string>; body: st
     if (key) meta[key] = value;
   }
   return { meta, body: match[2]!.trim() };
+}
+
+function sanitizeSkillName(name: string) {
+  const cleaned = name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!cleaned) throw new Error("Skill name is required");
+  return cleaned;
+}
+
+function renderSkillFile(skill: SkillInput) {
+  return [
+    "---",
+    `name: ${sanitizeSkillName(skill.name)}`,
+    `description: ${skill.description.trim() || "(no description)"}`,
+    "---",
+    "",
+    skill.body.trim() || `# ${sanitizeSkillName(skill.name)}\n\nAdd instructions for this skill here.`,
+    "",
+  ].join("\n");
 }
 
 /**
@@ -49,6 +73,27 @@ export async function loadSkills(skillsDir = `${process.cwd()}/skills`): Promise
 
   // Stable order so the skill index is deterministic.
   return skills.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function saveSkill(skill: SkillInput, skillsDir = `${process.cwd()}/skills`): Promise<Skill> {
+  const name = sanitizeSkillName(skill.name);
+  const dir = `${skillsDir}/${name}`;
+  await Bun.$`mkdir -p ${dir}`.quiet();
+  await Bun.write(`${dir}/SKILL.md`, renderSkillFile({ ...skill, name }));
+  return {
+    name,
+    description: skill.description.trim() || "(no description)",
+    body: skill.body.trim() || `# ${name}\n\nAdd instructions for this skill here.`,
+  };
+}
+
+export async function deleteSkill(name: string, skillsDir = `${process.cwd()}/skills`): Promise<boolean> {
+  const safeName = sanitizeSkillName(name);
+  const dir = `${skillsDir}/${safeName}`;
+  const file = Bun.file(`${dir}/SKILL.md`);
+  if (!(await file.exists())) return false;
+  await Bun.$`rm -rf ${dir}`.quiet();
+  return true;
 }
 
 /** Render the available-skills index injected into the system prompt. */

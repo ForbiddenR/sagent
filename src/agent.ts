@@ -18,7 +18,7 @@ const MAX_TOOL_ROUNDS = 6;
 export type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string }
-  | { type: "done" }
+  | { type: "done"; text: string }
   | { type: "error"; message: string };
 
 /** Pull plain text out of a chunk's content (string delta or content blocks). */
@@ -38,11 +38,10 @@ function extractText(content: MessageContent): string {
   return "";
 }
 
-export function createAgent(skills: Skill[]) {
-  const tools = buildTools(skills);
-  const toolsByName = new Map(tools.map((t) => [t.name, t]));
+export function createAgent(allSkills: Skill[]) {
+  const allSkillNames = allSkills.map((s) => s.name);
 
-  const llm = () => {
+  const llm = (skills: Skill[]) => {
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY is not set. Add it to .env (see .env.example).");
     }
@@ -53,32 +52,40 @@ export function createAgent(skills: Skill[]) {
       // Optional: point at an Anthropic-compatible third-party endpoint
       // (gateway/proxy). Left undefined → talks to the default Anthropic API.
       ...(process.env.ANTHROPIC_BASE_URL ? { anthropicApiUrl: process.env.ANTHROPIC_BASE_URL } : {}),
-    }).bindTools(tools);
+    }).bindTools(buildTools(skills));
   };
 
-  const systemPrompt = [
-    "You are a helpful assistant with access to tools and a set of skills.",
-    "Use the `calculator` tool for any non-trivial arithmetic.",
-    "Use `current_time` when the user asks about the date or time.",
-    "",
-    "Available skills (call `load_skill` with the skill name to read its full",
-    "instructions BEFORE doing a task it covers):",
-    renderSkillIndex(skills),
-    "",
-    "Be concise. Show your final answer clearly.",
-  ].join("\n");
+  function systemPrompt(skills: Skill[]) {
+    return [
+      "You are a helpful assistant with access to tools and a set of enabled skills.",
+      "Use the `calculator` tool for any non-trivial arithmetic.",
+      "Use `current_time` when the user asks about the date or time.",
+      "",
+      "Enabled skills (call `load_skill` with the skill name to read its full",
+      "instructions BEFORE doing a task it covers):",
+      renderSkillIndex(skills),
+      "",
+      "If a skill is not listed above, it is disabled for this session and you must not use it.",
+      "Be concise. Show your final answer clearly.",
+    ].join("\n");
+  }
 
-  /** Run one user turn, streaming events. Persists only user + final answer to memory. */
+  /** Run one user turn, streaming events. Persists user + final answer to memory. */
   async function* run(sessionId: string, userText: string): AsyncGenerator<AgentEvent> {
+    const activeSkillNames = new Set(memory.getActiveSkills(sessionId, allSkillNames));
+    const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
+    const tools = buildTools(activeSkills);
+    const toolsByName = new Map(tools.map((t) => [t.name, t]));
+
     memory.append(sessionId, new HumanMessage(userText));
 
     // Working transcript for this turn: system + persisted history.
     // Intermediate tool_use / tool_result messages stay local (not persisted),
     // keeping stored memory to clean user/assistant text pairs.
-    const working = [new SystemMessage(systemPrompt), ...memory.getHistory(sessionId)];
+    const working = [new SystemMessage(systemPrompt(activeSkills)), ...memory.getHistory(sessionId)];
 
     try {
-      const model = llm();
+      const model = llm(activeSkills);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const stream = await model.stream(working);
 
@@ -95,8 +102,9 @@ export function createAgent(skills: Skill[]) {
 
         if (toolCalls.length === 0) {
           // Final answer for this turn — persist just the text.
-          memory.append(sessionId, new AIMessage(extractText(gathered.content)));
-          yield { type: "done" };
+          const finalText = extractText(gathered.content);
+          memory.append(sessionId, new AIMessage(finalText));
+          yield { type: "done", text: finalText };
           return;
         }
 
@@ -106,13 +114,13 @@ export function createAgent(skills: Skill[]) {
           const selected = toolsByName.get(call.name);
           const result = selected
             ? String(await selected.invoke(call.args))
-            : `Error: unknown tool "${call.name}"`;
+            : `Error: unknown or disabled tool "${call.name}"`;
           working.push(new ToolMessage({ content: result, tool_call_id: call.id ?? call.name }));
         }
       }
 
       // Hit the tool-round cap without a final text answer.
-      yield { type: "done" };
+      yield { type: "done", text: "" };
     } catch (err) {
       yield { type: "error", message: (err as Error).message };
     }

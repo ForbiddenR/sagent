@@ -13,7 +13,9 @@ things in a minimal, readable way:
 
 A single-page chat UI (**React 19**, bundled natively by Bun — no Vite/webpack)
 streams responses over Server-Sent Events. Styling is Tailwind via CDN with
-shadcn-style components.
+shadcn-style components. The page includes a sidebar where you can create,
+choose, reset, and delete sessions, plus inspect and enable/disable skills per
+session.
 
 ## Stack
 
@@ -46,18 +48,22 @@ Open http://localhost:3000.
 ## Try it
 
 - **Tool calling**: “What is 1234 × 9?” → a `calculator` chip appears, answer streams back.
-- **Skills**: “Write me a haiku about the sea.” → a `load_skill` chip (the `poetry`
-  skill) appears, and the reply follows the skill's rules.
-- **Memory**: ask a follow-up like “what did I just ask?” → prior turns are remembered.
-- Restart the server → history is gone (in-memory by design).
+- **Skills**: inspect `calculator` or `poetry` in the sidebar, toggle them on/off per
+  session, then ask “Write me a haiku about the sea.” → when `poetry` is enabled,
+  a `load_skill` chip appears and the reply follows the skill's rules.
+- **Sessions**: use the sidebar to create, choose, reset, and delete independent
+  sessions. Each session has its own memory and enabled-skill set.
+- **Memory**: ask a follow-up like “what did I just ask?” → prior turns in the
+  selected session are remembered.
+- Restart the server → sessions/history are gone (in-memory by design).
 
 ## Project layout
 
 ```
 src/
-  index.ts           Bun.serve — routes: "/" (HTML) + /api/chat (SSE) + /api/reset
+  index.ts           Bun.serve — routes: "/" (HTML), /api/chat, /api/sessions, /api/skills
   agent.ts           ChatAnthropic + bindTools + streaming tool-call loop
-  memory.ts          SessionStore (Map<sessionId, BaseMessage[]>)
+  memory.ts          SessionStore (sessions, enabled skills, messages)
   skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
   tools.ts           calculator, current_time, load_skill
   frontend/
