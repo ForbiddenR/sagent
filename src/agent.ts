@@ -13,6 +13,7 @@ import { renderSkillIndex, type Skill } from "./skills.ts";
 
 const MODEL = process.env.MODEL || "claude-opus-4-8";
 const MAX_TOOL_ROUNDS = 6;
+const TOP_P = Number(process.env.TOP_P ?? "1");
 
 /** Events streamed out of the agent as it works. */
 export type AgentEvent =
@@ -49,6 +50,7 @@ export function createAgent(allSkills: Skill[]) {
       model: MODEL,
       maxTokens: 4096,
       apiKey: process.env.ANTHROPIC_API_KEY,
+      topP: TOP_P,
       // Optional: point at an Anthropic-compatible third-party endpoint
       // (gateway/proxy). Left undefined → talks to the default Anthropic API.
       ...(process.env.ANTHROPIC_BASE_URL ? { anthropicApiUrl: process.env.ANTHROPIC_BASE_URL } : {}),

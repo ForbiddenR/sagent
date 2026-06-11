@@ -4,3 +4,4 @@ node_modules/
 .DS_Store
 .claude/
 dist/
+agent-linux-x64

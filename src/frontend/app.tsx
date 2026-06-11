@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 
 // --- types -----------------------------------------------------------------
@@ -48,6 +48,90 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code key={index} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[0.85em] dark:bg-white/10">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function MarkdownMessage({ text }: { text: string }) {
+  const blocks: ReactNode[] = [];
+  const lines = text.split("\n");
+  let paragraph: string[] = [];
+  let list: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    blocks.push(
+      <p key={`p-${blocks.length}`} className="mb-2 last:mb-0">
+        {renderInlineMarkdown(paragraph.join("\n"))}
+      </p>,
+    );
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (list.length === 0) return;
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="mb-2 list-disc space-y-1 pl-5 last:mb-0">
+        {list.map((item, index) => (
+          <li key={index}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </ul>,
+    );
+    list = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    const bullet = trimmed.match(/^(?:[-*•]|\d+\.)\s+(.+)$/);
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const Tag = heading[1]!.length === 1 ? "h2" : "h3";
+      blocks.push(
+        <Tag key={`h-${blocks.length}`} className="mb-2 mt-1 font-semibold first:mt-0">
+          {renderInlineMarkdown(heading[2]!)}
+        </Tag>,
+      );
+      continue;
+    }
+
+    if (bullet) {
+      flushParagraph();
+      list.push(bullet[1]!);
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+
+  return <>{blocks}</>;
 }
 
 const blankSkill = (): Skill => ({ name: "", description: "", body: "# New skill\n\nWrite instructions here." });
@@ -283,7 +367,11 @@ function Bubble({ message }: { message: Message }) {
   return (
     <div className="flex flex-col items-start gap-0.5">
       {message.tools.map((name, i) => <ToolChip key={i} name={name} />)}
-      {message.text && <div className="bubble-assistant max-w-[85%] whitespace-pre-wrap rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">{message.text}</div>}
+      {message.text && (
+        <div className="bubble-assistant max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
+          <MarkdownMessage text={message.text} />
+        </div>
+      )}
       {message.error && <div className="max-w-[85%] rounded-xl2 border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700">Error: {message.error}</div>}
     </div>
   );
