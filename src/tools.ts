@@ -47,14 +47,23 @@ const currentTime = tool(
  */
 export function buildTools(skills: Skill[], sessionId: string): StructuredToolInterface[] {
   const byName = new Map(skills.map((s) => [s.name, s]));
-  const sessionWorkspace = `${WORKSPACE}/${sessionId}`;
+  const sessionWorkspace = `${WORKSPACE.replace(/\/+$/, "")}/${sessionId}`;
 
   function safeSessionPath(path: string): string {
-    const resolved = `${sessionWorkspace}/${path}`.replaceAll("//", "/");
-    if (!resolved.startsWith(sessionWorkspace)) {
-      throw new Error(`Path "${path}" is outside session workspace`);
+    if (path.startsWith("/") || path.includes("\0")) {
+      throw new Error(`Path "${path}" must be relative to the session workspace`);
     }
-    return resolved;
+
+    const parts: string[] = [];
+    for (const segment of path.split("/")) {
+      if (!segment || segment === ".") continue;
+      if (segment === "..") {
+        throw new Error(`Path "${path}" is outside session workspace`);
+      }
+      parts.push(segment);
+    }
+
+    return `${sessionWorkspace}/${parts.join("/")}`;
   }
 
   const readFile = tool(

@@ -43,6 +43,39 @@ function parseSkillInput(input: unknown): SkillInput | undefined {
   };
 }
 
+function safeSessionWorkspace(sessionId: string): string {
+  if (!sessionId || sessionId.includes("\0") || sessionId.includes("/") || sessionId.includes("\\") || sessionId === "." || sessionId === "..") {
+    throw new Error("Invalid session id");
+  }
+  return `${WORKSPACE.replace(/\/+$/, "")}/${sessionId}`;
+}
+
+function safeWorkspacePath(sessionId: string, path: string): string {
+  if (path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
+    throw new Error(`Path "${path}" must be relative to the session workspace`);
+  }
+
+  const parts: string[] = [];
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      throw new Error(`Path "${path}" is outside session workspace`);
+    }
+    parts.push(segment);
+  }
+
+  if (parts.length === 0) throw new Error("File path is required");
+  return `${safeSessionWorkspace(sessionId)}/${parts.join("/")}`;
+}
+
+function safeUploadFileName(name: string): string {
+  const fileName = name.split(/[\\/]/).pop() ?? "";
+  if (!fileName || fileName === "." || fileName === ".." || fileName.includes("\0")) {
+    throw new Error("Invalid upload filename");
+  }
+  return fileName;
+}
+
 const server = Bun.serve({
   port: PORT,
   // Bundles + serves the React frontend natively (JSX/TSX transpiled on the fly).
@@ -100,19 +133,18 @@ const server = Bun.serve({
     "/api/sessions/:id/upload": {
       async POST(req) {
         const id = req.params.id;
-        const sessionWorkspace = `${WORKSPACE}/${id}`;
         try {
           const formData = await req.formData();
           const file = formData.get("file") as File;
           if (!file) return json({ error: "No file provided" }, 400);
 
-          const fileName = file.name;
-          const filePath = `${sessionWorkspace}/${fileName}`;
+          const fileName = safeUploadFileName(file.name);
+          const filePath = safeWorkspacePath(id, fileName);
           await Bun.write(filePath, file);
 
           return json({ ok: true, fileName });
         } catch (err) {
-          return json({ error: (err as Error).message }, 500);
+          return json({ error: (err as Error).message }, 400);
         }
       },
     },
@@ -120,12 +152,12 @@ const server = Bun.serve({
     "/api/sessions/:id/files": {
       async GET(req) {
         const id = req.params.id;
-        const sessionWorkspace = `${WORKSPACE}/${id}`;
         try {
+          const sessionWorkspace = safeSessionWorkspace(id);
           const files: { name: string; size: number; modified: string; isDir: boolean }[] = [];
           const glob = new Bun.Glob("**/*");
           for await (const path of glob.scan({ cwd: sessionWorkspace })) {
-            const fullPath = `${sessionWorkspace}/${path}`;
+            const fullPath = safeWorkspacePath(id, path);
             const file = Bun.file(fullPath);
             const stat = await file.stat();
             files.push({
@@ -145,27 +177,25 @@ const server = Bun.serve({
     "/api/sessions/:id/files/:path": {
       async GET(req) {
         const { id, path } = req.params;
-        const sessionWorkspace = `${WORKSPACE}/${id}`;
-        const filePath = `${sessionWorkspace}/${path}`;
         try {
+          const filePath = safeWorkspacePath(id, path);
           const file = Bun.file(filePath);
           if (!(await file.exists())) return json({ error: "File not found" }, 404);
           const content = await file.text();
           return json({ content });
         } catch (err) {
-          return json({ error: (err as Error).message }, 500);
+          return json({ error: (err as Error).message }, 400);
         }
       },
       async PUT(req) {
         const { id, path } = req.params;
-        const sessionWorkspace = `${WORKSPACE}/${id}`;
-        const filePath = `${sessionWorkspace}/${path}`;
         try {
+          const filePath = safeWorkspacePath(id, path);
           const body = (await req.json()) as { content: string };
           await Bun.write(filePath, body.content);
           return json({ ok: true });
         } catch (err) {
-          return json({ error: (err as Error).message }, 500);
+          return json({ error: (err as Error).message }, 400);
         }
       },
     },
