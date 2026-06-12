@@ -1,240 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-
-// --- types -----------------------------------------------------------------
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  tools: string[];
-  toolDetails?: Record<string, unknown>[];
-  skills?: string[];
-  completed?: boolean;
-  error?: string;
-}
-
-interface SessionSummary {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  messageCount: number;
-  activeSkills: string[];
-}
-
-interface SessionFile {
-  name: string;
-  size: number;
-  modified: string;
-  isDir: boolean;
-}
-
-interface SkillSummary {
-  name: string;
-  description: string;
-}
-
-interface Skill extends SkillSummary {
-  body: string;
-}
-
-type AgentEvent =
-  | { type: "token"; text: string }
-  | { type: "tool"; name: string; args?: Record<string, unknown> }
-  | { type: "skill"; name: string }
-  | { type: "done"; text: string }
-  | { type: "error"; message: string };
-
-type SkillEditorState = { mode: "create" | "edit"; skill: Skill } | null;
-
-// --- helpers ----------------------------------------------------------------
-
-async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `Request failed: ${res.status}`);
-  return data as T;
-}
-
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function renderInlineMarkdown(text: string) {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
-  return parts.map((part, index) => {
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return (
-        <code key={index} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[0.85em] dark:bg-white/10">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
-    return part;
-  });
-}
-
-function MarkdownMessage({ text }: { text: string }) {
-  const blocks: ReactNode[] = [];
-  const lines = text.split("\n");
-  let paragraph: string[] = [];
-  let list: string[] = [];
-  let table: string[][] = [];
-  let codeBlock: string[] = [];
-  let inCodeBlock = false;
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    blocks.push(
-      <p key={`p-${blocks.length}`} className="mb-2 last:mb-0">
-        {renderInlineMarkdown(paragraph.join(" "))}
-      </p>,
-    );
-    paragraph = [];
-  };
-
-  const flushList = () => {
-    if (list.length === 0) return;
-    blocks.push(
-      <ul key={`ul-${blocks.length}`} className="mb-2 list-disc space-y-1 pl-5 last:mb-0">
-        {list.map((item, index) => (
-          <li key={index}>{renderInlineMarkdown(item)}</li>
-        ))}
-      </ul>,
-    );
-    list = [];
-  };
-
-  const flushTable = () => {
-    if (table.length === 0) return;
-    const header = table[0];
-    const rows = table.slice(2);
-    blocks.push(
-      <div key={`table-${blocks.length}`} className="mb-2 overflow-x-auto last:mb-0">
-        <table className="min-w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              {header?.map((cell, i) => (
-                <th key={i} className="border border-zinc-300 px-2 py-1 text-left font-semibold dark:border-zinc-700">
-                  {renderInlineMarkdown(cell)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => (
-              <tr key={i}>
-                {row.map((cell, j) => (
-                  <td key={j} className="border border-zinc-300 px-2 py-1 dark:border-zinc-700">
-                    {renderInlineMarkdown(cell)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>,
-    );
-    table = [];
-  };
-
-  const flushCodeBlock = () => {
-    if (codeBlock.length === 0) return;
-    blocks.push(
-      <pre key={`code-${blocks.length}`} className="mb-2 overflow-x-auto rounded bg-black/5 p-2 text-xs last:mb-0 dark:bg-white/5">
-        <code>{codeBlock.join("\n")}</code>
-      </pre>,
-    );
-    codeBlock = [];
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("```")) {
-      flushParagraph();
-      flushList();
-      flushTable();
-      if (inCodeBlock) {
-        flushCodeBlock();
-      }
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeBlock.push(line);
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    const bullet = trimmed.match(/^(?:[-*•]|\d+\.)\s+(.+)$/);
-    const indentedLine = line.match(/^\s{4,}(.+)$/);
-    const tableRow = trimmed.match(/^\|(.+)\|$/);
-
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      flushTable();
-      continue;
-    }
-
-    if (tableRow) {
-      flushParagraph();
-      flushList();
-      const cells = tableRow[1]!.split("|").map((c) => c.trim());
-      table.push(cells);
-      continue;
-    }
-
-    if (heading) {
-      flushParagraph();
-      flushList();
-      flushTable();
-      const level = heading[1]!.length;
-      const Tag = level === 1 ? "h2" : level === 2 ? "h3" : "h4";
-      blocks.push(
-        <Tag key={`h-${blocks.length}`} className="mb-2 mt-1 font-semibold first:mt-0">
-          {renderInlineMarkdown(heading[2]!)}
-        </Tag>,
-      );
-      continue;
-    }
-
-    if (bullet) {
-      flushParagraph();
-      flushTable();
-      list.push(bullet[1]!);
-      continue;
-    }
-
-    if (indentedLine) {
-      flushParagraph();
-      flushTable();
-      list.push(indentedLine[1]!);
-      continue;
-    }
-
-    flushList();
-    flushTable();
-    paragraph.push(trimmed);
-  }
-
-  flushParagraph();
-  flushList();
-  flushTable();
-  flushCodeBlock();
-
-  return <>{blocks}</>;
-}
-
-const blankSkill = (): Skill => ({ name: "", description: "", body: "# New skill\n\nWrite instructions here." });
-
-// --- chat/session hook ------------------------------------------------------
+import { Composer } from "./components/Composer";
+import { FileEditor } from "./components/FileEditor";
+import { Bubble, EmptyState } from "./components/Message";
+import { Sidebar } from "./components/Sidebar";
+import { SkillEditor } from "./components/SkillEditor";
+import type { AgentEvent, Message, SessionFile, SessionSummary, Skill, SkillEditorState, SkillSummary } from "./types";
+import { blankSkill, getJson } from "./utils";
 
 function useAgentPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -495,295 +267,10 @@ function useAgentPage() {
   };
 }
 
-// --- components -------------------------------------------------------------
-
-function formatToolArgs(args?: Record<string, unknown>): string {
-  if (!args || Object.keys(args).length === 0) return "";
-  const values = Object.values(args);
-  if (values.length === 0) return "";
-  const str = String(values[0]);
-  return str.length > 40 ? `${str.slice(0, 40)}...` : str;
-}
-
-function ToolChip({ name, args }: { name: string; args?: Record<string, unknown> }) {
-  const detail = formatToolArgs(args);
-  return (
-    <div className="inline-flex w-fit items-center gap-1 rounded-md border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-      🔧 {name}{detail && ` (${detail})`}
-    </div>
-  );
-}
-
-function SkillChip({ name }: { name: string }) {
-  return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300">📘 {name}</div>;
-}
-
-function Bubble({ message }: { message: Message }) {
-  if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="bubble-user max-w-[85%] whitespace-pre-wrap rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
-          {message.text}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col items-start gap-1">
-      <div className="flex max-w-[85%] flex-col gap-1">
-        {(message.skills ?? []).map((name, i) => <SkillChip key={`skill-${i}`} name={name} />)}
-        {(message.toolDetails ?? []).map((detail, i) => <ToolChip key={`tool-${i}`} name={detail.name as string} args={detail.args as Record<string, unknown>} />)}
-      </div>
-      {message.text && (
-        <div className="bubble-assistant max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
-          <MarkdownMessage text={message.text} />
-          {message.completed && <div className="muted mt-2 text-xs">response completed ✓</div>}
-          {!message.completed && !message.error && <div className="muted mt-2 text-xs animate-pulse">thinking...</div>}
-        </div>
-      )}
-      {message.error && <div className="max-w-[85%] rounded-xl2 border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700">Error: {message.error}</div>}
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="muted flex h-full flex-col items-center justify-center gap-2 text-center">
-      <p className="text-sm">Ask me anything.</p>
-      <p className="text-xs">Try “what is 1234 × 9?” or “write me a haiku about the sea”.</p>
-    </div>
-  );
-}
-
-function Sidebar({ state }: { state: ReturnType<typeof useAgentPage> }) {
-  const activeSkills = new Set(state.activeSession?.activeSkills ?? []);
-  return (
-    <aside className="card hidden h-full w-72 shrink-0 flex-col gap-4 overflow-hidden border-r p-4 md:flex">
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wide muted">Sessions</h2>
-          <button onClick={state.createSession} className="btn-primary rounded-md px-2 py-1 text-xs font-medium">New</button>
-        </div>
-        <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
-          {state.sessions.map((session) => (
-            <div key={session.id} className={`group rounded-lg border p-2 ${session.id === state.activeSessionId ? "border-zinc-900 dark:border-zinc-100" : "border-transparent hover:border-zinc-200 dark:hover:border-zinc-800"}`}>
-              <button onClick={() => state.loadSession(session.id)} className="w-full text-left">
-                <div className="truncate text-sm font-medium">{session.title}</div>
-                <div className="muted mt-0.5 text-xs">{session.messageCount} messages · {formatTime(session.updatedAt)}</div>
-              </button>
-              <div className="mt-2 flex gap-2 opacity-70 group-hover:opacity-100">
-                <button onClick={() => state.loadSession(session.id)} className="chip rounded-md border px-2 py-0.5 text-xs">Open</button>
-                <button onClick={() => state.deleteSession(session.id)} className="chip rounded-md border px-2 py-0.5 text-xs">Delete</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide muted">Files ({state.files.length})</h2>
-        <div className="mb-2">
-          <input
-            type="file"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) state.uploadFile(file);
-              e.target.value = "";
-            }}
-            className="w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-zinc-200 file:px-2 file:py-1 file:text-xs file:font-medium hover:file:bg-zinc-300 dark:file:bg-zinc-700 dark:hover:file:bg-zinc-600"
-          />
-        </div>
-        <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
-          {state.files.length === 0 ? (
-            <p className="muted text-xs">No files yet</p>
-          ) : (
-            state.files.filter(f => !f.isDir).map((file) => (
-              <button key={file.name} onClick={() => state.openFileEditor(file.name)} className="w-full rounded border border-zinc-200 p-1.5 text-left hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900">
-                <div className="truncate text-xs font-medium font-mono">{file.name}</div>
-                <div className="muted text-xs">{(file.size / 1024).toFixed(1)} KB</div>
-              </button>
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wide muted">Skills</h2>
-          <button onClick={state.openCreateSkill} className="btn-primary rounded-md px-2 py-1 text-xs font-medium">Add</button>
-        </div>
-        <div className="muted text-xs">{activeSkills.size}/{state.skills.length} enabled</div>
-        {state.skills.map((skill) => {
-          const enabled = activeSkills.has(skill.name);
-          return (
-            <div key={skill.name} className="rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
-              <div className="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => state.toggleSkill(skill.name, e.target.checked)}
-                  className="mt-1 h-4 w-4 accent-zinc-900 dark:accent-zinc-100"
-                />
-                <div className="min-w-0 flex-1">
-                  <button onClick={() => state.openEditSkill(skill.name)} className="truncate text-left text-sm font-medium hover:underline">
-                    {skill.name}
-                  </button>
-                  <p className="muted text-xs">{skill.description}</p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </section>
-    </aside>
-  );
-}
-
-function Composer({ busy, onSend }: { busy: boolean; onSend: (text: string) => void }) {
-  const [value, setValue] = useState("");
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  function autoGrow() {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
-  }
-
-  function submit() {
-    const text = value.trim();
-    if (!text || busy) return;
-    onSend(text);
-    setValue("");
-    requestAnimationFrame(() => {
-      if (ref.current) ref.current.style.height = "auto";
-    });
-  }
-
-  return (
-    <form className="card flex items-end gap-2 rounded-xl2 border p-2 shadow-sm" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-      <textarea
-        ref={ref}
-        rows={1}
-        value={value}
-        placeholder="Send a message…"
-        disabled={busy}
-        onChange={(e) => { setValue(e.target.value); autoGrow(); }}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-        className="field max-h-40 flex-1 resize-none rounded-lg bg-transparent px-2 py-1.5 text-sm outline-none"
-      />
-      <button type="submit" disabled={busy} className="btn-primary rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">Send</button>
-    </form>
-  );
-}
-
-function FileEditor({ state }: { state: ReturnType<typeof useAgentPage> }) {
-  const editor = state.fileEditor;
-  const [draft, setDraft] = useState(editor?.content ?? "");
-
-  useEffect(() => {
-    setDraft(editor?.content ?? "");
-  }, [editor?.path]);
-
-  if (!editor) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={state.closeFileEditor}>
-      <div className="card max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl2 border shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between border-b border-zinc-200 p-4 dark:border-zinc-800">
-          <div>
-            <h3 className="text-sm font-semibold font-mono">{editor.path}</h3>
-            <p className="muted text-xs">Edit file content</p>
-          </div>
-          <button onClick={state.closeFileEditor} className="chip rounded-md border px-2 py-1 text-xs">Close</button>
-        </div>
-        <div className="space-y-3 overflow-auto p-4">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            className="field h-96 w-full resize-y rounded-md border px-3 py-2 font-mono text-xs leading-relaxed outline-none"
-          />
-          <div className="flex justify-end">
-            <button onClick={() => state.saveFile(editor.path, draft)} className="btn-primary rounded-md px-3 py-2 text-xs font-medium">
-              Save file
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SkillEditor({ state }: { state: ReturnType<typeof useAgentPage> }) {
-  const editor = state.skillEditor;
-  const [draft, setDraft] = useState<Skill>(editor?.skill ?? blankSkill());
-
-  useEffect(() => {
-    setDraft(editor?.skill ?? blankSkill());
-  }, [editor?.skill.name, editor?.mode]);
-
-  if (!editor) return null;
-  const isEdit = editor.mode === "edit";
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={state.closeSkillEditor}>
-      <div className="card max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl2 border shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between border-b border-zinc-200 p-4 dark:border-zinc-800">
-          <div>
-            <h3 className="text-sm font-semibold">{isEdit ? "Edit skill" : "Add skill"}</h3>
-            <p className="muted text-xs">Skills are saved as <code>skills/&lt;name&gt;/SKILL.md</code>.</p>
-          </div>
-          <button onClick={state.closeSkillEditor} className="chip rounded-md border px-2 py-1 text-xs">Close</button>
-        </div>
-        <div className="space-y-3 overflow-auto p-4">
-          <label className="block text-xs font-medium">
-            Name
-            <input
-              value={draft.name}
-              disabled={isEdit}
-              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-              className="field mt-1 w-full rounded-md border px-3 py-2 text-sm outline-none"
-              placeholder="my-skill"
-            />
-          </label>
-          <label className="block text-xs font-medium">
-            Description
-            <input
-              value={draft.description}
-              onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-              className="field mt-1 w-full rounded-md border px-3 py-2 text-sm outline-none"
-              placeholder="One-line description"
-            />
-          </label>
-          <label className="block text-xs font-medium">
-            Instructions
-            <textarea
-              value={draft.body}
-              onChange={(e) => setDraft((d) => ({ ...d, body: e.target.value }))}
-              className="field mt-1 h-72 w-full resize-y rounded-md border px-3 py-2 font-mono text-xs leading-relaxed outline-none"
-            />
-          </label>
-          <div className="flex justify-between gap-2">
-            <div>
-              {isEdit && (
-                <button onClick={() => state.removeSkill(draft.name)} className="rounded-md border border-red-300 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50">
-                  Delete skill
-                </button>
-              )}
-            </div>
-            <button onClick={() => state.saveSkill(draft, editor.mode)} className="btn-primary rounded-md px-3 py-2 text-xs font-medium">
-              Save skill
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function App() {
   const state = useAgentPage();
   const listRef = useRef<HTMLElement>(null);
+  const activeSkills = useMemo(() => new Set(state.activeSession?.activeSkills ?? []), [state.activeSession?.activeSkills]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -792,7 +279,21 @@ function App() {
 
   return (
     <div className="flex h-full">
-      <Sidebar state={state} />
+      <Sidebar
+        sessions={state.sessions}
+        activeSessionId={state.activeSessionId}
+        files={state.files}
+        skills={state.skills}
+        activeSkills={activeSkills}
+        onLoadSession={state.loadSession}
+        onCreateSession={state.createSession}
+        onDeleteSession={state.deleteSession}
+        onUploadFile={state.uploadFile}
+        onOpenFileEditor={state.openFileEditor}
+        onToggleSkill={state.toggleSkill}
+        onOpenCreateSkill={state.openCreateSkill}
+        onOpenEditSkill={state.openEditSkill}
+      />
       <div className="flex h-full min-w-0 flex-1 flex-col px-4">
         <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
           <header className="flex items-center justify-between py-5">
@@ -810,7 +311,7 @@ function App() {
           </header>
 
           <main ref={listRef} className="flex-1 space-y-4 overflow-y-auto pb-4">
-            {state.messages.length === 0 ? <EmptyState /> : state.messages.map((m) => <Bubble key={m.id} message={m} />)}
+            {state.messages.length === 0 ? <EmptyState /> : state.messages.map((message) => <Bubble key={message.id} message={message} />)}
           </main>
 
           <footer className="sticky bottom-0 pb-5 pt-2" style={{ background: "var(--bg)" }}>
@@ -818,8 +319,8 @@ function App() {
           </footer>
         </div>
       </div>
-      <SkillEditor state={state} />
-      <FileEditor state={state} />
+      <SkillEditor editor={state.skillEditor} onClose={state.closeSkillEditor} onSave={state.saveSkill} onRemove={state.removeSkill} />
+      <FileEditor editor={state.fileEditor} onClose={state.closeFileEditor} onSave={state.saveFile} />
     </div>
   );
 }
