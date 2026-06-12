@@ -102,19 +102,50 @@ const server = Bun.serve({
         const id = req.params.id;
         const sessionWorkspace = `${WORKSPACE}/${id}`;
         try {
-          const files: { name: string; size: number; modified: string }[] = [];
+          const files: { name: string; size: number; modified: string; isDir: boolean }[] = [];
           const glob = new Bun.Glob("**/*");
-          for await (const path of glob.scan({ cwd: sessionWorkspace, onlyFiles: true })) {
-            const file = Bun.file(`${sessionWorkspace}/${path}`);
+          for await (const path of glob.scan({ cwd: sessionWorkspace })) {
+            const fullPath = `${sessionWorkspace}/${path}`;
+            const file = Bun.file(fullPath);
+            const stat = await file.stat();
             files.push({
               name: path,
               size: file.size,
-              modified: new Date((await file.stat()).mtime).toISOString(),
+              modified: new Date(stat.mtime).toISOString(),
+              isDir: stat.isDirectory(),
             });
           }
           return json({ files });
         } catch {
           return json({ files: [] });
+        }
+      },
+    },
+
+    "/api/sessions/:id/files/:path": {
+      async GET(req) {
+        const { id, path } = req.params;
+        const sessionWorkspace = `${WORKSPACE}/${id}`;
+        const filePath = `${sessionWorkspace}/${path}`;
+        try {
+          const file = Bun.file(filePath);
+          if (!(await file.exists())) return json({ error: "File not found" }, 404);
+          const content = await file.text();
+          return json({ content });
+        } catch (err) {
+          return json({ error: (err as Error).message }, 500);
+        }
+      },
+      async PUT(req) {
+        const { id, path } = req.params;
+        const sessionWorkspace = `${WORKSPACE}/${id}`;
+        const filePath = `${sessionWorkspace}/${path}`;
+        try {
+          const body = (await req.json()) as { content: string };
+          await Bun.write(filePath, body.content);
+          return json({ ok: true });
+        } catch (err) {
+          return json({ error: (err as Error).message }, 500);
         }
       },
     },

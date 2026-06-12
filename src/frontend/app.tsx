@@ -27,6 +27,7 @@ interface SessionFile {
   name: string;
   size: number;
   modified: string;
+  isDir: boolean;
 }
 
 interface SkillSummary {
@@ -153,6 +154,7 @@ function useAgentPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [files, setFiles] = useState<SessionFile[]>([]);
+  const [fileEditor, setFileEditor] = useState<{ path: string; content: string } | null>(null);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [skillEditor, setSkillEditor] = useState<SkillEditorState>(null);
   const [busy, setBusy] = useState(false);
@@ -273,6 +275,23 @@ function useAgentPage() {
     await Promise.all([refreshSkills(), refreshSessions()]);
   }
 
+  async function openFileEditor(path: string) {
+    if (!activeSessionId) return;
+    const data = await getJson<{ content: string }>(`/api/sessions/${activeSessionId}/files/${encodeURIComponent(path)}`);
+    setFileEditor({ path, content: data.content });
+  }
+
+  async function saveFile(path: string, content: string) {
+    if (!activeSessionId) return;
+    await getJson<{ ok: boolean }>(`/api/sessions/${activeSessionId}/files/${encodeURIComponent(path)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    setFileEditor(null);
+    await refreshFiles(activeSessionId);
+  }
+
   async function send(text: string) {
     let sessionId = activeSessionId;
     if (!sessionId) {
@@ -356,6 +375,7 @@ function useAgentPage() {
     activeSessionId,
     messages,
     files,
+    fileEditor,
     skills,
     skillEditor,
     busy,
@@ -369,6 +389,9 @@ function useAgentPage() {
     openCreateSkill,
     saveSkill,
     removeSkill,
+    openFileEditor,
+    saveFile,
+    closeFileEditor: () => setFileEditor(null),
     closeSkillEditor: () => setSkillEditor(null),
   };
 }
@@ -484,11 +507,11 @@ function Sidebar({ state }: { state: ReturnType<typeof useAgentPage> }) {
           {state.files.length === 0 ? (
             <p className="muted text-xs">No files yet</p>
           ) : (
-            state.files.map((file) => (
-              <div key={file.name} className="rounded border border-zinc-200 p-1.5 dark:border-zinc-800">
+            state.files.filter(f => !f.isDir).map((file) => (
+              <button key={file.name} onClick={() => state.openFileEditor(file.name)} className="w-full rounded border border-zinc-200 p-1.5 text-left hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900">
                 <div className="truncate text-xs font-medium font-mono">{file.name}</div>
                 <div className="muted text-xs">{(file.size / 1024).toFixed(1)} KB</div>
-              </div>
+              </button>
             ))
           )}
         </div>
@@ -561,6 +584,43 @@ function Composer({ busy, onSend }: { busy: boolean; onSend: (text: string) => v
       />
       <button type="submit" disabled={busy} className="btn-primary rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50">Send</button>
     </form>
+  );
+}
+
+function FileEditor({ state }: { state: ReturnType<typeof useAgentPage> }) {
+  const editor = state.fileEditor;
+  const [draft, setDraft] = useState(editor?.content ?? "");
+
+  useEffect(() => {
+    setDraft(editor?.content ?? "");
+  }, [editor?.path]);
+
+  if (!editor) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={state.closeFileEditor}>
+      <div className="card max-h-[90vh] w-full max-w-2xl overflow-hidden rounded-xl2 border shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between border-b border-zinc-200 p-4 dark:border-zinc-800">
+          <div>
+            <h3 className="text-sm font-semibold font-mono">{editor.path}</h3>
+            <p className="muted text-xs">Edit file content</p>
+          </div>
+          <button onClick={state.closeFileEditor} className="chip rounded-md border px-2 py-1 text-xs">Close</button>
+        </div>
+        <div className="space-y-3 overflow-auto p-4">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="field h-96 w-full resize-y rounded-md border px-3 py-2 font-mono text-xs leading-relaxed outline-none"
+          />
+          <div className="flex justify-end">
+            <button onClick={() => state.saveFile(editor.path, draft)} className="btn-primary rounded-md px-3 py-2 text-xs font-medium">
+              Save file
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -669,6 +729,7 @@ function App() {
         </div>
       </div>
       <SkillEditor state={state} />
+      <FileEditor state={state} />
     </div>
   );
 }
