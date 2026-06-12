@@ -4,6 +4,7 @@ import { Parser } from "expr-eval";
 import type { Skill } from "./skills.ts";
 
 const exprParser = new Parser();
+const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
 
 /** Evaluate a single arithmetic expression — safe (no eval), via expr-eval. */
 const calculator = tool(
@@ -43,8 +44,60 @@ const currentTime = tool(
  * Build the tool set, including `load_skill` which closes over the loaded
  * skills so the model can pull a full SKILL.md body on demand.
  */
-export function buildTools(skills: Skill[]): StructuredToolInterface[] {
+export function buildTools(skills: Skill[], sessionId: string): StructuredToolInterface[] {
   const byName = new Map(skills.map((s) => [s.name, s]));
+  const sessionWorkspace = `${WORKSPACE}/${sessionId}`;
+
+  function safeSessionPath(path: string): string {
+    const resolved = `${sessionWorkspace}/${path}`.replaceAll("//", "/");
+    if (!resolved.startsWith(sessionWorkspace)) {
+      throw new Error(`Path "${path}" is outside session workspace`);
+    }
+    return resolved;
+  }
+
+  const readFile = tool(
+    async ({ path }) => {
+      try {
+        const fullPath = safeSessionPath(path);
+        const file = Bun.file(fullPath);
+        if (!(await file.exists())) {
+          return `Error: file "${path}" does not exist`;
+        }
+        const text = await file.text();
+        return text;
+      } catch (err) {
+        return `Error: ${(err as Error).message}`;
+      }
+    },
+    {
+      name: "read_file",
+      description: "Read the contents of a file from your session workspace folder.",
+      schema: z.object({
+        path: z.string().describe("Relative path within your session workspace, e.g. 'notes.txt' or 'data/config.json'"),
+      }),
+    },
+  );
+
+  const writeFile = tool(
+    async ({ path, content }) => {
+      try {
+        const fullPath = safeSessionPath(path);
+        await Bun.write(fullPath, content);
+        return `Successfully wrote ${content.length} bytes to "${path}"`;
+      } catch (err) {
+        return `Error: ${(err as Error).message}`;
+      }
+    },
+    {
+      name: "write_file",
+      description: "Write content to a file in your session workspace folder. Creates parent directories if needed.",
+      schema: z.object({
+        path: z.string().describe("Relative path within your session workspace, e.g. 'output.txt' or 'results/data.json'"),
+        content: z.string().describe("The content to write to the file"),
+      }),
+    },
+  );
 
   const loadSkill = tool(
     ({ name }) => {
@@ -66,7 +119,7 @@ export function buildTools(skills: Skill[]): StructuredToolInterface[] {
     },
   );
 
-  return [calculator, currentTime, loadSkill];
+  return [calculator, currentTime, readFile, writeFile, loadSkill];
 }
 
 export type AgentTool = StructuredToolInterface;

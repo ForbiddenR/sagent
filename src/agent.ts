@@ -43,7 +43,7 @@ function extractText(content: MessageContent): string {
 export function createAgent(allSkills: Skill[]) {
   const allSkillNames = allSkills.map((s) => s.name);
 
-  const llm = (skills: Skill[]) => {
+  const llm = (skills: Skill[], sessionId: string) => {
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY is not set. Add it to .env (see .env.example).");
     }
@@ -55,7 +55,7 @@ export function createAgent(allSkills: Skill[]) {
       // Optional: point at an Anthropic-compatible third-party endpoint
       // (gateway/proxy). Left undefined → talks to the default Anthropic API.
       ...(process.env.ANTHROPIC_BASE_URL ? { anthropicApiUrl: process.env.ANTHROPIC_BASE_URL } : {}),
-    }).bindTools(buildTools(skills));
+    }).bindTools(buildTools(skills, sessionId));
   };
 
   function systemPrompt(skills: Skill[]) {
@@ -63,6 +63,7 @@ export function createAgent(allSkills: Skill[]) {
       "You are a helpful assistant with access to tools and a set of enabled skills.",
       "Use the `calculator` tool for any non-trivial arithmetic.",
       "Use `current_time` when the user asks about the date or time.",
+      "Use `read_file` and `write_file` to read/write files in your private session workspace.",
       "",
       "Enabled skills (call `load_skill` with the skill name to read its full",
       "instructions BEFORE doing a task it covers):",
@@ -77,7 +78,7 @@ export function createAgent(allSkills: Skill[]) {
   async function* run(sessionId: string, userText: string): AsyncGenerator<AgentEvent> {
     const activeSkillNames = new Set(memory.getActiveSkills(sessionId, allSkillNames));
     const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
-    const tools = buildTools(activeSkills);
+    const tools = buildTools(activeSkills, sessionId);
     const toolsByName = new Map(tools.map((t) => [t.name, t]));
 
     memory.append(sessionId, new HumanMessage(userText));
@@ -88,7 +89,7 @@ export function createAgent(allSkills: Skill[]) {
     const working = [new SystemMessage(systemPrompt(activeSkills)), ...memory.getHistory(sessionId)];
 
     try {
-      const model = llm(activeSkills);
+      const model = llm(activeSkills, sessionId);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const stream = await model.stream(working);
 
