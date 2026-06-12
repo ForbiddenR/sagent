@@ -5,6 +5,7 @@ import { memory, type ClientMessage } from "./memory.ts";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DEV = process.env.NODE_ENV !== "production";
+const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.warn("⚠️  ANTHROPIC_API_KEY is not set — chat requests will fail. See .env.example.");
@@ -93,6 +94,28 @@ const server = Bun.serve({
         if (!id || !Array.isArray(body.activeSkills)) return json({ error: "activeSkills array required" }, 400);
         const session = memory.setActiveSkills(id, body.activeSkills, skillNames);
         return json({ session, activeSkills: session.activeSkills });
+      },
+    },
+
+    "/api/sessions/:id/files": {
+      async GET(req) {
+        const id = req.params.id;
+        const sessionWorkspace = `${WORKSPACE}/${id}`;
+        try {
+          const files: { name: string; size: number; modified: string }[] = [];
+          const glob = new Bun.Glob("**/*");
+          for await (const path of glob.scan({ cwd: sessionWorkspace, onlyFiles: true })) {
+            const file = Bun.file(`${sessionWorkspace}/${path}`);
+            files.push({
+              name: path,
+              size: file.size,
+              modified: new Date((await file.stat()).mtime).toISOString(),
+            });
+          }
+          return json({ files });
+        } catch {
+          return json({ files: [] });
+        }
       },
     },
 

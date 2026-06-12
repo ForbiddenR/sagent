@@ -22,6 +22,12 @@ interface SessionSummary {
   activeSkills: string[];
 }
 
+interface SessionFile {
+  name: string;
+  size: number;
+  modified: string;
+}
+
 interface SkillSummary {
   name: string;
   description: string;
@@ -145,6 +151,7 @@ function useAgentPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [files, setFiles] = useState<SessionFile[]>([]);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [skillEditor, setSkillEditor] = useState<SkillEditorState>(null);
   const [busy, setBusy] = useState(false);
@@ -174,6 +181,16 @@ function useAgentPage() {
       const next = prev.filter((s) => s.id !== id);
       return [data.session, ...next].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     });
+    await refreshFiles(id);
+  }
+
+  async function refreshFiles(id: string) {
+    try {
+      const data = await getJson<{ files: SessionFile[] }>(`/api/sessions/${id}/files`);
+      setFiles(data.files);
+    } catch {
+      setFiles([]);
+    }
   }
 
   async function createSession() {
@@ -185,6 +202,7 @@ function useAgentPage() {
     setSessions((prev) => [data.session, ...prev]);
     setActiveSessionId(data.session.id);
     setMessages([]);
+    setFiles([]);
   }
 
   async function deleteSession(id: string) {
@@ -312,6 +330,7 @@ function useAgentPage() {
       patch((m) => ({ ...m, error: (err as Error).message, completed: true }));
     } finally {
       setBusy(false);
+      if (sessionId) await refreshFiles(sessionId);
     }
   }
 
@@ -335,6 +354,7 @@ function useAgentPage() {
     activeSession,
     activeSessionId,
     messages,
+    files,
     skills,
     skillEditor,
     busy,
@@ -430,6 +450,22 @@ function Sidebar({ state }: { state: ReturnType<typeof useAgentPage> }) {
               </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide muted">Files ({state.files.length})</h2>
+        <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
+          {state.files.length === 0 ? (
+            <p className="muted text-xs">No files yet</p>
+          ) : (
+            state.files.map((file) => (
+              <div key={file.name} className="rounded border border-zinc-200 p-1.5 dark:border-zinc-800">
+                <div className="truncate text-xs font-medium font-mono">{file.name}</div>
+                <div className="muted text-xs">{(file.size / 1024).toFixed(1)} KB</div>
+              </div>
+            ))
+          )}
         </div>
       </section>
 
