@@ -97,6 +97,26 @@ const server = Bun.serve({
       },
     },
 
+    "/api/sessions/:id/upload": {
+      async POST(req) {
+        const id = req.params.id;
+        const sessionWorkspace = `${WORKSPACE}/${id}`;
+        try {
+          const formData = await req.formData();
+          const file = formData.get("file") as File;
+          if (!file) return json({ error: "No file provided" }, 400);
+
+          const fileName = file.name;
+          const filePath = `${sessionWorkspace}/${fileName}`;
+          await Bun.write(filePath, file);
+
+          return json({ ok: true, fileName });
+        } catch (err) {
+          return json({ error: (err as Error).message }, 500);
+        }
+      },
+    },
+
     "/api/sessions/:id/files": {
       async GET(req) {
         const id = req.params.id;

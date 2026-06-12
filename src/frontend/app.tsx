@@ -84,12 +84,14 @@ function MarkdownMessage({ text }: { text: string }) {
   let paragraph: string[] = [];
   let list: string[] = [];
   let table: string[][] = [];
+  let codeBlock: string[] = [];
+  let inCodeBlock = false;
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
     blocks.push(
       <p key={`p-${blocks.length}`} className="mb-2 last:mb-0">
-        {renderInlineMarkdown(paragraph.join("\n"))}
+        {renderInlineMarkdown(paragraph.join(" "))}
       </p>,
     );
     paragraph = [];
@@ -140,10 +142,38 @@ function MarkdownMessage({ text }: { text: string }) {
     table = [];
   };
 
+  const flushCodeBlock = () => {
+    if (codeBlock.length === 0) return;
+    blocks.push(
+      <pre key={`code-${blocks.length}`} className="mb-2 overflow-x-auto rounded bg-black/5 p-2 text-xs last:mb-0 dark:bg-white/5">
+        <code>{codeBlock.join("\n")}</code>
+      </pre>,
+    );
+    codeBlock = [];
+  };
+
   for (const line of lines) {
     const trimmed = line.trim();
-    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+
+    if (trimmed.startsWith("```")) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      if (inCodeBlock) {
+        flushCodeBlock();
+      }
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeBlock.push(line);
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
     const bullet = trimmed.match(/^(?:[-*•]|\d+\.)\s+(.+)$/);
+    const indentedLine = line.match(/^\s{4,}(.+)$/);
     const tableRow = trimmed.match(/^\|(.+)\|$/);
 
     if (!trimmed) {
@@ -165,7 +195,8 @@ function MarkdownMessage({ text }: { text: string }) {
       flushParagraph();
       flushList();
       flushTable();
-      const Tag = heading[1]!.length === 1 ? "h2" : "h3";
+      const level = heading[1]!.length;
+      const Tag = level === 1 ? "h2" : level === 2 ? "h3" : "h4";
       blocks.push(
         <Tag key={`h-${blocks.length}`} className="mb-2 mt-1 font-semibold first:mt-0">
           {renderInlineMarkdown(heading[2]!)}
@@ -181,14 +212,22 @@ function MarkdownMessage({ text }: { text: string }) {
       continue;
     }
 
+    if (indentedLine) {
+      flushParagraph();
+      flushTable();
+      list.push(indentedLine[1]!);
+      continue;
+    }
+
     flushList();
     flushTable();
-    paragraph.push(line);
+    paragraph.push(trimmed);
   }
 
   flushParagraph();
   flushList();
   flushTable();
+  flushCodeBlock();
 
   return <>{blocks}</>;
 }
@@ -340,6 +379,17 @@ function useAgentPage() {
     await refreshFiles(activeSessionId);
   }
 
+  async function uploadFile(file: File) {
+    if (!activeSessionId) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    await fetch(`/api/sessions/${activeSessionId}/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    await refreshFiles(activeSessionId);
+  }
+
   async function send(text: string) {
     let sessionId = activeSessionId;
     if (!sessionId) {
@@ -439,6 +489,7 @@ function useAgentPage() {
     removeSkill,
     openFileEditor,
     saveFile,
+    uploadFile,
     closeFileEditor: () => setFileEditor(null),
     closeSkillEditor: () => setSkillEditor(null),
   };
@@ -531,6 +582,17 @@ function Sidebar({ state }: { state: ReturnType<typeof useAgentPage> }) {
 
       <section className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide muted">Files ({state.files.length})</h2>
+        <div className="mb-2">
+          <input
+            type="file"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) state.uploadFile(file);
+              e.target.value = "";
+            }}
+            className="w-full text-xs file:mr-2 file:rounded file:border-0 file:bg-zinc-200 file:px-2 file:py-1 file:text-xs file:font-medium hover:file:bg-zinc-300 dark:file:bg-zinc-700 dark:hover:file:bg-zinc-600"
+          />
+        </div>
         <div className="max-h-32 space-y-1 overflow-y-auto pr-1">
           {state.files.length === 0 ? (
             <p className="muted text-xs">No files yet</p>
