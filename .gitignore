@@ -5,3 +5,4 @@ node_modules/
 .claude/
 dist/
 agent-linux-x64
+.sessions.json
