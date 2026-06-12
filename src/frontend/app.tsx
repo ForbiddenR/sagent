@@ -83,6 +83,7 @@ function MarkdownMessage({ text }: { text: string }) {
   const lines = text.split("\n");
   let paragraph: string[] = [];
   let list: string[] = [];
+  let table: string[][] = [];
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
@@ -106,20 +107,64 @@ function MarkdownMessage({ text }: { text: string }) {
     list = [];
   };
 
+  const flushTable = () => {
+    if (table.length === 0) return;
+    const header = table[0];
+    const rows = table.slice(2);
+    blocks.push(
+      <div key={`table-${blocks.length}`} className="mb-2 overflow-x-auto last:mb-0">
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            <tr>
+              {header?.map((cell, i) => (
+                <th key={i} className="border border-zinc-300 px-2 py-1 text-left font-semibold dark:border-zinc-700">
+                  {renderInlineMarkdown(cell)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i}>
+                {row.map((cell, j) => (
+                  <td key={j} className="border border-zinc-300 px-2 py-1 dark:border-zinc-700">
+                    {renderInlineMarkdown(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    );
+    table = [];
+  };
+
   for (const line of lines) {
     const trimmed = line.trim();
     const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
     const bullet = trimmed.match(/^(?:[-*•]|\d+\.)\s+(.+)$/);
+    const tableRow = trimmed.match(/^\|(.+)\|$/);
 
     if (!trimmed) {
       flushParagraph();
       flushList();
+      flushTable();
+      continue;
+    }
+
+    if (tableRow) {
+      flushParagraph();
+      flushList();
+      const cells = tableRow[1]!.split("|").map((c) => c.trim());
+      table.push(cells);
       continue;
     }
 
     if (heading) {
       flushParagraph();
       flushList();
+      flushTable();
       const Tag = heading[1]!.length === 1 ? "h2" : "h3";
       blocks.push(
         <Tag key={`h-${blocks.length}`} className="mb-2 mt-1 font-semibold first:mt-0">
@@ -131,16 +176,19 @@ function MarkdownMessage({ text }: { text: string }) {
 
     if (bullet) {
       flushParagraph();
+      flushTable();
       list.push(bullet[1]!);
       continue;
     }
 
     flushList();
+    flushTable();
     paragraph.push(line);
   }
 
   flushParagraph();
   flushList();
+  flushTable();
 
   return <>{blocks}</>;
 }

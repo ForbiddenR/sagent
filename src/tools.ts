@@ -2,6 +2,7 @@ import { tool, type StructuredToolInterface } from "@langchain/core/tools";
 import { z } from "zod";
 import { Parser } from "expr-eval";
 import type { Skill } from "./skills.ts";
+import { ragStore } from "./rag.ts";
 
 const exprParser = new Parser();
 const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
@@ -131,6 +132,24 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     },
   );
 
+  const searchWorkspace = tool(
+    async ({ query }) => {
+      try {
+        await ragStore.indexSession(sessionId);
+        return await ragStore.search(sessionId, query);
+      } catch (err) {
+        return `Error: ${(err as Error).message}`;
+      }
+    },
+    {
+      name: "search_workspace",
+      description: "Search all files in your workspace using semantic similarity. Better than read_file when you don't know exact filenames.",
+      schema: z.object({
+        query: z.string().describe("What to search for, e.g. 'database configuration' or 'error handling code'"),
+      }),
+    },
+  );
+
   const loadSkill = tool(
     ({ name }) => {
       const skill = byName.get(name);
@@ -151,7 +170,7 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     },
   );
 
-  return [calculator, currentTime, readFile, writeFile, runBash, loadSkill];
+  return [calculator, currentTime, readFile, writeFile, runBash, searchWorkspace, loadSkill];
 }
 
 export type AgentTool = StructuredToolInterface;

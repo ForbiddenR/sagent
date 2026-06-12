@@ -65,6 +65,7 @@ export function createAgent(allSkills: Skill[]) {
       "Use `current_time` when the user asks about the date or time.",
       "Use `read_file` and `write_file` to read/write files in your private session workspace.",
       "Use `run_bash` to execute shell commands in your session workspace.",
+      "Use `search_workspace` to search all workspace files by semantic meaning (better than read_file when you don't know the exact filename).",
       "",
       "Enabled skills (call `load_skill` with the skill name to read its full",
       "instructions BEFORE doing a task it covers):",
