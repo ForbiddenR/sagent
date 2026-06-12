@@ -355,11 +355,11 @@ function useAgentPage() {
 // --- components -------------------------------------------------------------
 
 function ToolChip({ name }: { name: string }) {
-  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">🔧 using tool: {name}</div>;
+  return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">🔧 {name}</div>;
 }
 
 function SkillChip({ name }: { name: string }) {
-  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">📘 using skill: {name}</div>;
+  return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300">📘 {name}</div>;
 }
 
 function StatusChip({ completed, hasError }: { completed?: boolean; hasError: boolean }) {
