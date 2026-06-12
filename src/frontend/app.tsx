@@ -419,26 +419,6 @@ function SkillChip({ name }: { name: string }) {
   return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-blue-300 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300">📘 {name}</div>;
 }
 
-function StatusChip({ completed, hasError }: { completed?: boolean; hasError: boolean }) {
-  if (hasError) {
-    return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-red-300 bg-red-50 px-2 py-0.5 text-xs text-red-700">✗ stopped with error</div>;
-  }
-  if (completed) {
-    return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">✓ response completed</div>;
-  }
-  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> generating response…</div>;
-}
-
-function StatusChip({ completed, hasError }: { completed?: boolean; hasError: boolean }) {
-  if (hasError) {
-    return <div className="inline-flex w-fit items-center gap-1 rounded-md border border-red-300 bg-red-50 px-2 py-0.5 text-xs text-red-700">✗ stopped with error</div>;
-  }
-  if (completed) {
-    return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs">✓ response completed</div>;
-  }
-  return <div className="chip inline-flex w-fit items-center gap-1 rounded-md border px-2 py-0.5 text-xs"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> generating response…</div>;
-}
-
 function Bubble({ message }: { message: Message }) {
   if (message.role === "user") {
     return (
