@@ -99,6 +99,34 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     },
   );
 
+  const runBash = tool(
+    async ({ command }) => {
+      try {
+        const proc = Bun.spawn(["bash", "-c", command], {
+          cwd: sessionWorkspace,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ]);
+        await proc.exited;
+        const output = [stdout, stderr].filter(Boolean).join("\n");
+        return output || `Command completed with exit code ${proc.exitCode}`;
+      } catch (err) {
+        return `Error: ${(err as Error).message}`;
+      }
+    },
+    {
+      name: "run_bash",
+      description: "Run a bash command in your session workspace folder. Use for file operations, data processing, etc.",
+      schema: z.object({
+        command: z.string().describe("The bash command to execute, e.g. 'ls -la' or 'cat file.txt | grep pattern'"),
+      }),
+    },
+  );
+
   const loadSkill = tool(
     ({ name }) => {
       const skill = byName.get(name);
@@ -119,7 +147,7 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     },
   );
 
-  return [calculator, currentTime, readFile, writeFile, loadSkill];
+  return [calculator, currentTime, readFile, writeFile, runBash, loadSkill];
 }
 
 export type AgentTool = StructuredToolInterface;
