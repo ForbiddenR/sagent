@@ -22,6 +22,7 @@ type SidebarPanel = "workspace" | "skills";
 
 export function Sidebar({ sessions, activeSessionId, files, skills, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill }: SidebarProps) {
   const [panel, setPanel] = useState<SidebarPanel>("workspace");
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const visibleFiles = files.filter((file) => !file.isDir);
 
   return (
@@ -45,23 +46,32 @@ export function Sidebar({ sessions, activeSessionId, files, skills, activeSkills
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold uppercase tracking-wide muted">Sessions</h2>
+              <button onClick={() => setSessionsCollapsed((collapsed) => !collapsed)} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide muted hover:text-zinc-950 dark:hover:text-zinc-50">
+                <span className="text-[10px]">{sessionsCollapsed ? "▶" : "▼"}</span>
+                Sessions
+              </button>
               <button onClick={onCreateSession} className="btn-primary rounded-md px-2 py-1 text-xs font-medium">New</button>
             </div>
-            <div className="space-y-1">
-              {sessions.map((session) => (
-                <div key={session.id} className={`group rounded-lg border p-2 ${session.id === activeSessionId ? "border-zinc-900 dark:border-zinc-100" : "border-transparent hover:border-zinc-200 dark:hover:border-zinc-800"}`}>
-                  <button onClick={() => onLoadSession(session.id)} className="w-full text-left">
-                    <div className="truncate text-sm font-medium">{session.title}</div>
-                    <div className="muted mt-0.5 text-xs">{session.messageCount} messages · {formatTime(session.updatedAt)}</div>
-                  </button>
-                  <div className="mt-2 flex gap-2 opacity-70 group-hover:opacity-100">
-                    <button onClick={() => onLoadSession(session.id)} className="chip rounded-md border px-2 py-0.5 text-xs">Open</button>
-                    <button onClick={() => onDeleteSession(session.id)} className="chip rounded-md border px-2 py-0.5 text-xs">Delete</button>
+            {sessionsCollapsed ? (
+              <button onClick={() => setSessionsCollapsed(false)} className="chip w-full rounded-md border px-2 py-1.5 text-left text-xs">
+                {sessions.length} session{sessions.length === 1 ? "" : "s"} hidden
+              </button>
+            ) : (
+              <div className="space-y-1">
+                {sessions.map((session) => (
+                  <div key={session.id} className={`group rounded-lg border p-2 ${session.id === activeSessionId ? "border-zinc-900 dark:border-zinc-100" : "border-transparent hover:border-zinc-200 dark:hover:border-zinc-800"}`}>
+                    <button onClick={() => onLoadSession(session.id)} className="w-full text-left">
+                      <div className="truncate text-sm font-medium">{session.title}</div>
+                      <div className="muted mt-0.5 text-xs">{session.messageCount} messages · {formatTime(session.updatedAt)}</div>
+                    </button>
+                    <div className="mt-2 flex gap-2 opacity-70 group-hover:opacity-100">
+                      <button onClick={() => onLoadSession(session.id)} className="chip rounded-md border px-2 py-0.5 text-xs">Open</button>
+                      <button onClick={() => onDeleteSession(session.id)} className="chip rounded-md border px-2 py-0.5 text-xs">Delete</button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
 
           <section className="space-y-2">
