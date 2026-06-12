@@ -186,6 +186,7 @@ const server = Bun.serve({
               role: "assistant",
               text: "",
               tools: [],
+              toolDetails: [],
               skills: [],
               completed: false,
             };
@@ -194,7 +195,10 @@ const server = Bun.serve({
             try {
               for await (const event of agent.run(sessionId, message)) {
                 if (event.type === "token") assistantMessage.text += event.text;
-                else if (event.type === "tool") assistantMessage.tools.push(event.name);
+                else if (event.type === "tool") {
+                  assistantMessage.tools.push(event.name);
+                  assistantMessage.toolDetails?.push({ name: event.name, args: event.args });
+                }
                 else if (event.type === "skill") assistantMessage.skills?.push(event.name);
                 else if (event.type === "done") {
                   assistantMessage.text = event.text || assistantMessage.text;

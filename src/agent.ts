@@ -18,7 +18,7 @@ const TOP_P = Number(process.env.TOP_P ?? "1");
 /** Events streamed out of the agent as it works. */
 export type AgentEvent =
   | { type: "token"; text: string }
-  | { type: "tool"; name: string }
+  | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
   | { type: "done"; text: string }
   | { type: "error"; message: string };
@@ -119,7 +119,7 @@ export function createAgent(allSkills: Skill[]) {
             const skillName = typeof call.args?.name === "string" ? call.args.name : "unknown";
             yield { type: "skill", name: skillName };
           } else {
-            yield { type: "tool", name: call.name };
+            yield { type: "tool", name: call.name, args: call.args as Record<string, unknown> };
           }
           const selected = toolsByName.get(call.name);
           const result = selected

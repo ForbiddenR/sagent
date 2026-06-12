@@ -8,6 +8,7 @@ export interface ClientMessage {
   role: "user" | "assistant";
   text: string;
   tools: string[];
+  toolDetails?: Record<string, unknown>[];
   skills?: string[];
   completed?: boolean;
   error?: string;
