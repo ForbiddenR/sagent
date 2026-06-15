@@ -130,6 +130,7 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       renderSkillIndex(skills),
       "",
       "If a skill is not listed above, it is disabled for this session and you must not use it.",
+      "When reporting the result of a tool or skill call, put the label and the value on separate lines for readability.",
       "Be concise. Show your final answer clearly.",
     ].join("\n");
   }
