@@ -1,5 +1,5 @@
 import index from "./frontend/index.html";
-import { createAgent, type Agent } from "./agent.ts";
+import { createAgent, type Agent, type ApprovalRequest } from "./agent.ts";
 import { deleteSkill, loadSkills, saveSkill, type Skill, type SkillInput } from "./skills.ts";
 import { memory, type ClientMessage } from "./memory.ts";
 
@@ -15,10 +15,28 @@ let skills: Skill[] = [];
 let skillNames: string[] = [];
 let agent: Agent;
 
+interface PendingApproval {
+  resolve: (approved: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+const pendingApprovals = new Map<string, PendingApproval>();
+
+function requestApproval(request: ApprovalRequest): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingApprovals.delete(request.id);
+      resolve(false);
+    }, APPROVAL_TIMEOUT_MS);
+    pendingApprovals.set(request.id, { resolve, timer });
+  });
+}
+
 async function reloadSkills() {
   skills = await loadSkills();
   skillNames = skills.map((s) => s.name);
-  agent = createAgent(skills);
+  agent = createAgent(skills, requestApproval);
   console.log(`Loaded ${skills.length} skill(s): ${skillNames.join(", ") || "(none)"}`);
 }
 
@@ -78,6 +96,7 @@ function safeUploadFileName(name: string): string {
 
 const server = Bun.serve({
   port: PORT,
+  idleTimeout: 255,
   // Bundles + serves the React frontend natively (JSX/TSX transpiled on the fly).
   development: DEV ? { hmr: true } : false,
   routes: {
@@ -200,6 +219,19 @@ const server = Bun.serve({
       },
     },
 
+    "/api/approvals/:id": {
+      async POST(req) {
+        const pending = pendingApprovals.get(req.params.id);
+        if (!pending) return json({ error: "Approval request not found or expired" }, 404);
+
+        const body = (await req.json().catch(() => ({}))) as { approved?: boolean };
+        clearTimeout(pending.timer);
+        pendingApprovals.delete(req.params.id);
+        pending.resolve(body.approved === true);
+        return json({ ok: true });
+      },
+    },
+
     "/api/skills": {
       GET() {
         return json({
@@ -262,6 +294,9 @@ const server = Bun.serve({
         const stream = new ReadableStream({
           async start(controller) {
             const enc = new TextEncoder();
+            const heartbeat = setInterval(() => {
+              controller.enqueue(enc.encode(": keep-alive\n\n"));
+            }, 5_000);
             const assistantMessage: ClientMessage = {
               id: crypto.randomUUID(),
               role: "assistant",
@@ -292,6 +327,7 @@ const server = Bun.serve({
               assistantMessage.error = message;
               send({ type: "error", message });
             } finally {
+              clearInterval(heartbeat);
               memory.appendClientMessage(sessionId, assistantMessage);
               controller.close();
             }

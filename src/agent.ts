@@ -5,8 +5,10 @@ import {
   AIMessage,
   ToolMessage,
   type AIMessageChunk,
+  type BaseMessage,
   type MessageContent,
 } from "@langchain/core/messages";
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import { memory } from "./memory.ts";
 import { buildTools } from "./tools.ts";
 import { renderSkillIndex, type Skill } from "./skills.ts";
@@ -15,13 +17,64 @@ const MODEL = process.env.MODEL || "claude-opus-4-8";
 const MAX_TOOL_ROUNDS = 6;
 const TOP_P = Number(process.env.TOP_P ?? "1");
 
+export interface ApprovalRequest {
+  id: string;
+  sessionId: string;
+  name: "run_bash";
+  args?: Record<string, unknown>;
+}
+
+export type ApprovalRequestFn = (request: ApprovalRequest) => Promise<boolean>;
+
 /** Events streamed out of the agent as it works. */
 export type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
+  | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
+  | { type: "approval_result"; id: string; approved: boolean }
   | { type: "done"; text: string }
   | { type: "error"; message: string };
+
+type ToolCallLike = {
+  id?: string;
+  name: string;
+  args?: Record<string, unknown>;
+};
+
+class EventQueue<T> {
+  private items: T[] = [];
+  private waiters: ((result: IteratorResult<T>) => void)[] = [];
+  private closed = false;
+
+  push(item: T) {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter({ value: item, done: false });
+    else this.items.push(item);
+  }
+
+  close() {
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter({ value: undefined, done: true });
+    }
+  }
+
+  async *drain(): AsyncGenerator<T> {
+    while (true) {
+      const next = await this.next();
+      if (next.done) return;
+      yield next.value;
+    }
+  }
+
+  private next(): Promise<IteratorResult<T>> {
+    const item = this.items.shift();
+    if (item !== undefined) return Promise.resolve({ value: item, done: false });
+    if (this.closed) return Promise.resolve({ value: undefined, done: true });
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+}
 
 /** Pull plain text out of a chunk's content (string delta or content blocks). */
 function extractText(content: MessageContent): string {
@@ -40,7 +93,12 @@ function extractText(content: MessageContent): string {
   return "";
 }
 
-export function createAgent(allSkills: Skill[]) {
+function getToolCalls(message?: BaseMessage): ToolCallLike[] {
+  const calls = (message as { tool_calls?: ToolCallLike[] } | undefined)?.tool_calls;
+  return Array.isArray(calls) ? calls : [];
+}
+
+export function createAgent(allSkills: Skill[], requestApproval?: ApprovalRequestFn) {
   const allSkillNames = allSkills.map((s) => s.name);
 
   const llm = (skills: Skill[], sessionId: string) => {
@@ -82,59 +140,123 @@ export function createAgent(allSkills: Skill[]) {
     const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
     const tools = buildTools(activeSkills, sessionId);
     const toolsByName = new Map(tools.map((t) => [t.name, t]));
+    const events = new EventQueue<AgentEvent>();
 
     memory.append(sessionId, new HumanMessage(userText));
 
     // Working transcript for this turn: system + persisted history.
     // Intermediate tool_use / tool_result messages stay local (not persisted),
     // keeping stored memory to clean user/assistant text pairs.
-    const working = [new SystemMessage(systemPrompt(activeSkills)), ...memory.getHistory(sessionId)];
+    const initialMessages: BaseMessage[] = [
+      new SystemMessage(systemPrompt(activeSkills)),
+      ...memory.getHistory(sessionId),
+    ];
 
-    try {
-      const model = llm(activeSkills, sessionId);
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const stream = await model.stream(working);
+    const StateAnnotation = Annotation.Root({
+      messages: Annotation<BaseMessage[], BaseMessage | BaseMessage[]>({
+        reducer: (left, right) => left.concat(Array.isArray(right) ? right : [right]),
+        default: () => [],
+      }),
+      finalText: Annotation<string>(),
+      done: Annotation<boolean>(),
+      rounds: Annotation<number>(),
+    });
 
-        let gathered: AIMessageChunk | undefined;
-        for await (const chunk of stream) {
-          gathered = gathered === undefined ? chunk : gathered.concat(chunk);
-          const text = extractText(chunk.content);
-          if (text) yield { type: "token", text };
-        }
-        if (!gathered) break;
+    const model = llm(activeSkills, sessionId);
 
-        working.push(gathered);
-        const toolCalls = gathered.tool_calls ?? [];
+    async function callModel(state: typeof StateAnnotation.State) {
+      const stream = await model.stream(state.messages);
 
-        if (toolCalls.length === 0) {
-          // Final answer for this turn — persist just the text.
-          const finalText = extractText(gathered.content);
-          memory.append(sessionId, new AIMessage(finalText));
-          yield { type: "done", text: finalText };
-          return;
-        }
-
-        // Execute each requested tool and feed results back.
-        for (const call of toolCalls) {
-          if (call.name === "load_skill") {
-            const skillName = typeof call.args?.name === "string" ? call.args.name : "unknown";
-            yield { type: "skill", name: skillName };
-          } else {
-            yield { type: "tool", name: call.name, args: call.args as Record<string, unknown> };
-          }
-          const selected = toolsByName.get(call.name);
-          const result = selected
-            ? String(await selected.invoke(call.args))
-            : `Error: unknown or disabled tool "${call.name}"`;
-          working.push(new ToolMessage({ content: result, tool_call_id: call.id ?? call.name }));
-        }
+      let gathered: AIMessageChunk | undefined;
+      for await (const chunk of stream) {
+        gathered = gathered === undefined ? chunk : gathered.concat(chunk);
+        const text = extractText(chunk.content);
+        if (text) events.push({ type: "token", text });
       }
 
-      // Hit the tool-round cap without a final text answer.
-      yield { type: "done", text: "" };
-    } catch (err) {
-      yield { type: "error", message: (err as Error).message };
+      if (!gathered) {
+        events.push({ type: "done", text: "" });
+        return { done: true, finalText: "", rounds: state.rounds + 1 };
+      }
+
+      const toolCalls = gathered.tool_calls ?? [];
+      if (toolCalls.length === 0) {
+        const finalText = extractText(gathered.content);
+        memory.append(sessionId, new AIMessage(finalText));
+        events.push({ type: "done", text: finalText });
+        return { messages: gathered, done: true, finalText, rounds: state.rounds + 1 };
+      }
+
+      return { messages: gathered, done: false, finalText: "", rounds: state.rounds + 1 };
     }
+
+    async function callTools(state: typeof StateAnnotation.State) {
+      const toolMessages: ToolMessage[] = [];
+      const toolCalls = getToolCalls(state.messages.at(-1));
+
+      for (const call of toolCalls) {
+        const args = call.args;
+        if (call.name === "load_skill") {
+          const skillName = typeof args?.name === "string" ? args.name : "unknown";
+          events.push({ type: "skill", name: skillName });
+        } else {
+          events.push({ type: "tool", name: call.name, args });
+        }
+
+        const selected = toolsByName.get(call.name);
+        let result: string;
+        if (!selected) {
+          result = `Error: unknown or disabled tool "${call.name}"`;
+        } else if (call.name === "run_bash" && requestApproval) {
+          const approvalId = crypto.randomUUID();
+          events.push({ type: "approval_request", id: approvalId, name: "run_bash", args });
+          const approved = await requestApproval({ id: approvalId, sessionId, name: "run_bash", args });
+          events.push({ type: "approval_result", id: approvalId, approved });
+          result = approved
+            ? String(await selected.invoke(args))
+            : "Denied: user declined to run this command.";
+        } else {
+          result = String(await selected.invoke(args));
+        }
+        toolMessages.push(new ToolMessage({ content: result, tool_call_id: call.id ?? call.name }));
+      }
+
+      return { messages: toolMessages };
+    }
+
+    function routeAfterModel(state: typeof StateAnnotation.State) {
+      if (state.done || state.rounds >= MAX_TOOL_ROUNDS) return END;
+      return getToolCalls(state.messages.at(-1)).length > 0 ? "tools" : END;
+    }
+
+    const graph = new StateGraph(StateAnnotation)
+      .addNode("model", callModel)
+      .addNode("tools", callTools)
+      .addEdge(START, "model")
+      .addConditionalEdges("model", routeAfterModel)
+      .addEdge("tools", "model")
+      .compile();
+
+    const graphTask = (async () => {
+      try {
+        const result = await graph.invoke({
+          messages: initialMessages,
+          finalText: "",
+          done: false,
+          rounds: 0,
+        });
+        if (!result.done) events.push({ type: "done", text: "" });
+      } catch (err) {
+        events.push({ type: "error", message: (err as Error).message });
+      } finally {
+        events.close();
+      }
+    })();
+
+    for await (const event of events.drain()) {
+      yield event;
+    }
+    await graphTask;
   }
 
   return { run };

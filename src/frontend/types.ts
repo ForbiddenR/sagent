@@ -1,3 +1,9 @@
+export interface PendingApproval {
+  id: string;
+  name: "run_bash";
+  args?: Record<string, unknown>;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -5,6 +11,7 @@ export interface Message {
   tools: string[];
   toolDetails?: Record<string, unknown>[];
   skills?: string[];
+  pendingApproval?: PendingApproval;
   completed?: boolean;
   error?: string;
 }
@@ -38,6 +45,8 @@ export type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
+  | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
+  | { type: "approval_result"; id: string; approved: boolean }
   | { type: "done"; text: string }
   | { type: "error"; message: string };
 

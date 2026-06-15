@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 export function renderInlineMarkdown(text: string) {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\n]+\*|_[^_\n]+_)/g);
   return parts.map((part, index) => {
     if (part.startsWith("`") && part.endsWith("`")) {
       return (
@@ -12,6 +12,9 @@ export function renderInlineMarkdown(text: string) {
     }
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if ((part.startsWith("*") && part.endsWith("*")) || (part.startsWith("_") && part.endsWith("_"))) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
     }
     return part;
   });

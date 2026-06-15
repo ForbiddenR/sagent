@@ -162,6 +162,14 @@ function useAgentPage() {
     await refreshFiles(activeSessionId);
   }
 
+  async function handleApproval(id: string, approved: boolean) {
+    await getJson<{ ok: boolean }>(`/api/approvals/${id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ approved }),
+    });
+  }
+
   async function send(text: string) {
     let sessionId = activeSessionId;
     if (!sessionId) {
@@ -209,6 +217,8 @@ function useAgentPage() {
           if (event.type === "token") patch((m) => ({ ...m, text: m.text + event.text }));
           else if (event.type === "tool") patch((m) => ({ ...m, tools: [...m.tools, event.name], toolDetails: [...(m.toolDetails ?? []), { name: event.name, args: event.args }] }));
           else if (event.type === "skill") patch((m) => ({ ...m, skills: [...(m.skills ?? []), event.name] }));
+          else if (event.type === "approval_request") patch((m) => ({ ...m, pendingApproval: { id: event.id, name: event.name, args: event.args } }));
+          else if (event.type === "approval_result") patch((m) => ({ ...m, pendingApproval: undefined }));
           else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
           else if (event.type === "error") patch((m) => ({ ...m, error: event.message, completed: true }));
         }
@@ -262,6 +272,7 @@ function useAgentPage() {
     openFileEditor,
     saveFile,
     uploadFile,
+    handleApproval,
     closeFileEditor: () => setFileEditor(null),
     closeSkillEditor: () => setSkillEditor(null),
   };
@@ -311,7 +322,7 @@ function App() {
           </header>
 
           <main ref={listRef} className="flex-1 space-y-4 overflow-y-auto pb-4">
-            {state.messages.length === 0 ? <EmptyState /> : state.messages.map((message) => <Bubble key={message.id} message={message} />)}
+            {state.messages.length === 0 ? <EmptyState /> : state.messages.map((message) => <Bubble key={message.id} message={message} onApprove={state.handleApproval} />)}
           </main>
 
           <footer className="sticky bottom-0 pb-5 pt-2" style={{ background: "var(--bg)" }}>

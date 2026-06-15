@@ -6,6 +6,49 @@ import { ragStore } from "./rag.ts";
 
 const exprParser = new Parser();
 const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
+const SHELL_CANDIDATES = [
+  process.env.SHELL,
+  "/bin/bash",
+  "/usr/bin/bash",
+  "/bin/sh",
+  "/usr/bin/sh",
+  "bash",
+  "sh",
+].filter((shell): shell is string => Boolean(shell));
+
+async function shellExists(shell: string): Promise<boolean> {
+  return shell.startsWith("/") ? Bun.file(shell).exists() : true;
+}
+
+async function runShellCommand(command: string, cwd: string): Promise<string> {
+  const errors: string[] = [];
+
+  for (const shell of SHELL_CANDIDATES) {
+    try {
+      if (!(await shellExists(shell))) {
+        errors.push(`${shell}: not found`);
+        continue;
+      }
+
+      const proc = Bun.spawn([shell, "-c", command], {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      await proc.exited;
+      const output = [stdout, stderr].filter(Boolean).join("\n");
+      return output || `Command completed with exit code ${proc.exitCode}`;
+    } catch (err) {
+      errors.push(`${shell}: ${(err as Error).message}`);
+    }
+  }
+
+  throw new Error(`No usable shell found. Tried: ${errors.join("; ")}`);
+}
 
 /** Evaluate a single arithmetic expression — safe (no eval), via expr-eval. */
 const calculator = tool(
@@ -114,20 +157,8 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
   const runBash = tool(
     async ({ command }) => {
       try {
-        console.log(`[BASH REQUEST] Command: ${command}`);
-        // TODO: Implement user approval mechanism
-        const proc = Bun.spawn(["bash", "-c", command], {
-          cwd: sessionWorkspace,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-        ]);
-        await proc.exited;
-        const output = [stdout, stderr].filter(Boolean).join("\n");
-        return output || `Command completed with exit code ${proc.exitCode}`;
+        console.log(`[BASH APPROVED] Command: ${command}`);
+        return await runShellCommand(command, sessionWorkspace);
       } catch (err) {
         return `Error: ${(err as Error).message}`;
       }
