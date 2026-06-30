@@ -319,6 +319,10 @@ const server = Bun.serve({
                 else if (event.type === "done") {
                   assistantMessage.text = event.text || assistantMessage.text;
                   assistantMessage.completed = true;
+                } else if (event.type === "timeout") {
+                  assistantMessage.error = event.message;
+                  assistantMessage.timeout = true;
+                  assistantMessage.completed = true;
                 } else if (event.type === "error") assistantMessage.error = event.message;
                 send(event);
               }

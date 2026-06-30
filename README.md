@@ -101,6 +101,7 @@ All options are read from the environment (Bun auto-loads `.env`). See `.env.exa
 | `MODEL`               | `claude-opus-4-8`    | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
 | `ANTHROPIC_BASE_URL`  | Anthropic API        | Optional. Point at an Anthropic-compatible endpoint (gateway/proxy, e.g. LiteLLM, Cloudflare AI Gateway, a corporate proxy). Must speak the Anthropic `/v1/messages` API. Leave unset for the default. |
 | `TOP_P`               | `1`                  | Top-p sampling for the model. |
+| `MODEL_TIMEOUT_MS`    | `60000`              | Max ms to wait for the next model chunk before treating the request as timed out (a streaming response is not interrupted; only total silence trips it). Emits a timeout notification so the user knows to check the API. |
 | `MAX_MODEL_MESSAGES`  | `100`                | Max recent messages sent back to the model for context. Full frontend session messages are still persisted separately. |
 | `SESSION_STORE_FILE`  | `.sessions.json`     | Where persisted sessions are stored. |
 | `WORKSPACE`           | `./workspace`        | Workspace folder for the `read_file` / `write_file` tools. |
@@ -117,6 +118,7 @@ ANTHROPIC_API_KEY=sk-ant-... \
 MODEL=claude-opus-4-8 \
 ANTHROPIC_BASE_URL=https://gateway.example.com/anthropic \
 TOP_P=1 \
+MODEL_TIMEOUT_MS=60000 \
 MAX_MODEL_MESSAGES=100 \
 SESSION_STORE_FILE=.sessions.json \
 WORKSPACE=./workspace \

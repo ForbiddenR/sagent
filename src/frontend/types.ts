@@ -14,6 +14,7 @@ export interface Message {
   pendingApproval?: PendingApproval;
   completed?: boolean;
   error?: string;
+  timeout?: boolean;
 }
 
 export interface SessionSummary {
@@ -48,6 +49,7 @@ export type AgentEvent =
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
   | { type: "done"; text: string }
+  | { type: "timeout"; message: string }
   | { type: "error"; message: string };
 
 export type SkillEditorState = { mode: "create" | "edit"; skill: Skill } | null;

@@ -220,6 +220,7 @@ function useAgentPage() {
           else if (event.type === "approval_request") patch((m) => ({ ...m, pendingApproval: { id: event.id, name: event.name, args: event.args } }));
           else if (event.type === "approval_result") patch((m) => ({ ...m, pendingApproval: undefined }));
           else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
+          else if (event.type === "timeout") patch((m) => ({ ...m, error: event.message, timeout: true, completed: true }));
           else if (event.type === "error") patch((m) => ({ ...m, error: event.message, completed: true }));
         }
       }
