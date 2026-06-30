@@ -12,6 +12,7 @@ export interface ClientMessage {
   skills?: string[];
   completed?: boolean;
   error?: string;
+  timeout?: boolean;
 }
 
 export interface SessionSummary {

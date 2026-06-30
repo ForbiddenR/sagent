@@ -41,11 +41,17 @@ export function Bubble({ message }: { message: Message }) {
       {message.text && (
         <div className="bubble-assistant max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
           <MarkdownMessage text={message.text} />
-          {message.completed && <div className="muted mt-2 text-xs">response completed ✓</div>}
-          {!message.completed && !message.error && <div className="muted mt-2 text-xs animate-pulse">thinking...</div>}
+          {message.completed && !message.error && !message.timeout && <div className="muted mt-2 text-xs">response completed ✓</div>}
+          {!message.completed && !message.error && !message.timeout && <div className="muted mt-2 text-xs animate-pulse">thinking...</div>}
         </div>
       )}
-      {message.error && <div className="max-w-[85%] rounded-xl2 border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700">Error: {message.error}</div>}
+      {message.error && !message.timeout && <div className="max-w-[85%] rounded-xl2 border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700">Error: {message.error}</div>}
+      {message.timeout && (
+        <div className="max-w-[85%] rounded-xl2 border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+          <div className="font-medium">⏱ Request timed out</div>
+          <div className="mt-1 text-xs">{message.error}</div>
+        </div>
+      )}
     </div>
   );
 }

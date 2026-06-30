@@ -7,6 +7,7 @@ export interface Message {
   skills?: string[];
   completed?: boolean;
   error?: string;
+  timeout?: boolean;
 }
 
 export interface SessionSummary {
@@ -39,6 +40,7 @@ export type AgentEvent =
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
   | { type: "done"; text: string }
+  | { type: "timeout"; message: string }
   | { type: "error"; message: string };
 
 export type SkillEditorState = { mode: "create" | "edit"; skill: Skill } | null;

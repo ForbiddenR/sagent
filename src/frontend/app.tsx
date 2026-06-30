@@ -210,6 +210,7 @@ function useAgentPage() {
           else if (event.type === "tool") patch((m) => ({ ...m, tools: [...m.tools, event.name], toolDetails: [...(m.toolDetails ?? []), { name: event.name, args: event.args }] }));
           else if (event.type === "skill") patch((m) => ({ ...m, skills: [...(m.skills ?? []), event.name] }));
           else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
+          else if (event.type === "timeout") patch((m) => ({ ...m, error: event.message, timeout: true, completed: true }));
           else if (event.type === "error") patch((m) => ({ ...m, error: event.message, completed: true }));
         }
       }

@@ -14,6 +14,73 @@ import { renderSkillIndex, type Skill } from "./skills.ts";
 const MODEL = process.env.MODEL || "claude-opus-4-8";
 const MAX_TOOL_ROUNDS = 6;
 const TOP_P = Number(process.env.TOP_P ?? "1");
+// Max seconds to wait for the next chunk from the model before treating the
+// request as stalled/timed out. A long generation that keeps streaming is fine;
+// only a complete silence for this long trips the timeout.
+const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS ?? "60000");
+
+const TIMEOUT_HINT =
+  "The request to the AI model timed out. Please check the API — verify your ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL (if set), network connectivity, and that the model is available, then try again.";
+
+/** Thrown when the model produces no chunk within MODEL_TIMEOUT_MS. */
+class StallTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Model did not respond within ${Math.round(ms / 1000)}s`);
+    this.name = "StallTimeoutError";
+  }
+}
+
+/** True for errors that look like a timed-out / aborted request to the model. */
+function isTimeoutLikeError(err: unknown): boolean {
+  if (err instanceof StallTimeoutError) return true;
+  const e = err as { name?: string; message?: string } | undefined;
+  if (!e) return false;
+  if (e.name === "AbortError") return true;
+  return /\b(timeout|timed out|etimedout|aborted)\b/i.test(e.message ?? "");
+}
+
+/** Resolve `p` but reject with StallTimeoutError if it takes longer than stallMs. */
+function raceWithStall<T>(p: Promise<T>, stallMs: number, onStall: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onStall();
+      reject(new StallTimeoutError(stallMs));
+    }, stallMs);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * Yield chunks from `source`, but reject with StallTimeoutError if acquiring the
+ * stream OR waiting for the next chunk exceeds `stallMs`. Calls `onStall`
+ * (e.g. to abort the underlying fetch) the instant a stall is detected.
+ */
+async function* withStallTimeout<T>(
+  source: Promise<AsyncIterable<T>> | AsyncIterable<T>,
+  stallMs: number,
+  onStall: () => void,
+): AsyncGenerator<T> {
+  const resolved = await raceWithStall(Promise.resolve(source), stallMs, onStall);
+  const it = resolved[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      const result = await raceWithStall(it.next(), stallMs, onStall);
+      if (result.done) return;
+      yield result.value;
+    }
+  } finally {
+    await it.return?.();
+  }
+}
 
 /** Events streamed out of the agent as it works. */
 export type AgentEvent =
@@ -21,6 +88,7 @@ export type AgentEvent =
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
   | { type: "done"; text: string }
+  | { type: "timeout"; message: string }
   | { type: "error"; message: string };
 
 /** Pull plain text out of a chunk's content (string delta or content blocks). */
@@ -93,10 +161,13 @@ export function createAgent(allSkills: Skill[]) {
     try {
       const model = llm(activeSkills, sessionId);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const stream = await model.stream(working);
+        // Abort the underlying fetch if the model stalls, so we don't hang on
+        // an unreachable / wedged API endpoint indefinitely.
+        const controller = new AbortController();
+        const stream = model.stream(working, { signal: controller.signal });
 
         let gathered: AIMessageChunk | undefined;
-        for await (const chunk of stream) {
+        for await (const chunk of withStallTimeout(stream as Promise<AsyncIterable<AIMessageChunk>>, MODEL_TIMEOUT_MS, () => controller.abort())) {
           gathered = gathered === undefined ? chunk : gathered.concat(chunk);
           const text = extractText(chunk.content);
           if (text) yield { type: "token", text };
@@ -133,7 +204,11 @@ export function createAgent(allSkills: Skill[]) {
       // Hit the tool-round cap without a final text answer.
       yield { type: "done", text: "" };
     } catch (err) {
-      yield { type: "error", message: (err as Error).message };
+      if (isTimeoutLikeError(err)) {
+        yield { type: "timeout", message: TIMEOUT_HINT };
+      } else {
+        yield { type: "error", message: (err as Error).message };
+      }
     }
   }
 
