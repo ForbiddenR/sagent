@@ -93,8 +93,37 @@ Restart the server — it's picked up automatically.
 
 ## Configuration
 
-| Env var             | Default            | Notes |
-|---------------------|--------------------|-------|
-| `ANTHROPIC_API_KEY` | —                  | Required. |
-| `MODEL`             | `claude-opus-4-8`  | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
-| `PORT`              | `3000`             | Server port. |
+All options are read from the environment (Bun auto-loads `.env`). See `.env.example`.
+
+| Env var               | Default              | Notes |
+|-----------------------|----------------------|-------|
+| `ANTHROPIC_API_KEY`   | —                    | Required. Get one at https://console.anthropic.com/. |
+| `MODEL`               | `claude-opus-4-8`    | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
+| `ANTHROPIC_BASE_URL`  | Anthropic API        | Optional. Point at an Anthropic-compatible endpoint (gateway/proxy, e.g. LiteLLM, Cloudflare AI Gateway, a corporate proxy). Must speak the Anthropic `/v1/messages` API. Leave unset for the default. |
+| `TOP_P`               | `1`                  | Top-p sampling for the model. |
+| `MAX_MODEL_MESSAGES`  | `100`                | Max recent messages sent back to the model for context. Full frontend session messages are still persisted separately. |
+| `SESSION_STORE_FILE`  | `.sessions.json`     | Where persisted sessions are stored. |
+| `WORKSPACE`           | `./workspace`        | Workspace folder for the `read_file` / `write_file` tools. |
+| `PORT`                | `3000`               | Server port. |
+| `NODE_ENV`            | —                    | Set to `production` to disable dev-only behavior (e.g. HMR). |
+
+### Example: setting all variables on a Linux server
+
+Pass them inline as a single command prefix. Build the binary first with
+`bun run build` (produces `dist/agent-linux-x64`), then run:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... \
+MODEL=claude-opus-4-8 \
+ANTHROPIC_BASE_URL=https://gateway.example.com/anthropic \
+TOP_P=1 \
+MAX_MODEL_MESSAGES=100 \
+SESSION_STORE_FILE=.sessions.json \
+WORKSPACE=./workspace \
+PORT=3000 \
+NODE_ENV=production \
+./dist/agent-linux-x64
+```
+
+Drop any variable you don't need (e.g. `ANTHROPIC_BASE_URL`) — the defaults
+from the table above apply.
