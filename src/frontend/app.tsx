@@ -302,7 +302,7 @@ function App() {
               <div className="btn-primary flex h-8 w-8 items-center justify-center rounded-xl2 text-sm font-bold">A</div>
               <div>
                 <h1 className="text-sm font-semibold leading-tight">{state.activeSession?.title ?? "Agent"}</h1>
-                <p className="muted text-xs leading-tight">Bun · React · LangChain · {state.activeSession?.activeSkills.length ?? 0} skills enabled</p>
+                <p className="muted text-xs leading-tight">{state.activeSession?.activeSkills.length ?? 0} skills enabled</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
