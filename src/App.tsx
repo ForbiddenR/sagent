@@ -40,7 +40,9 @@ export default function App() {
     })();
   }, []);
   useEffect(() => { const dark = settings.theme === "dark" || (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches); document.documentElement.dataset.theme = dark ? "dark" : "light"; }, [settings.theme]);
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), [active?.messages, busy]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [active?.messages, busy]);
 
   async function createSession() { const session = await api.createSession(); replaceSession(session); setActiveId(session.id); navigate("/"); }
   async function runCommand(text: string) {

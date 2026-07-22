@@ -4,7 +4,7 @@ import type { Settings } from "../types";
 
 export function SettingsPage({ settings, onSave }: { settings: Settings; onSave: (settings: Settings) => Promise<void> }) {
   const [form, setForm] = useState(settings); const [saved, setSaved] = useState(false);
-  useEffect(() => setForm(settings), [settings]);
+  useEffect(() => { setForm(settings); }, [settings]);
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => setForm(current => ({ ...current, [key]: value }));
   return <main className="page scroll"><div className="page-header"><div><span className="eyebrow">Configuration</span><h1>Settings</h1><p>Stored locally as TOML in the application config directory.</p></div></div>
     <section className="settings-card">
