@@ -1,29 +1,28 @@
 {
-  "name": "bun-langchain-agent",
-  "version": "0.1.0",
+  "name": "dagent",
   "private": true,
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "start": "bun src/index.ts",
-    "typecheck": "tsc --noEmit",
-    "build": "bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile dist/agent-linux-x64"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "@langchain/anthropic": "^0.3.0",
-    "@langchain/community": "^1.1.29",
-    "@langchain/core": "^0.3.0",
-    "@langchain/textsplitters": "^1.0.1",
-    "expr-eval": "^2.0.2",
-    "langchain": "^1.4.4",
-    "react": "^19",
-    "react-dom": "^19",
-    "zod": "^3.23.8"
+    "@tauri-apps/api": "^2.5.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^7.1.1",
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "bun-types": "latest",
-    "typescript": "^5.5.0"
+    "@tauri-apps/cli": "^2.5.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.3"
   }
 }

@@ -1,9 +1,7 @@
 node_modules/
-.env
-*.log
-.DS_Store
-.claude/
 dist/
-workspace/
-agent-linux-x64
-.sessions.json
+src-tauri/target/
+*.pdb
+*.msi
+*.exe
+*.nsis.zip

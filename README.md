@@ -1,100 +1,29 @@
-# Bun + LangChain Agent
+# Dagent
 
-A small agent server built with [Bun](https://bun.sh) and
-[LangChain](https://js.langchain.com), backed by Claude. It demonstrates three
-things in a minimal, readable way:
+Dagent is the Windows desktop version of the `sagent` proof of concept. It uses React 19 for the UI and Tauri 2/Rust for local persistence, provider requests, tools, skills, sessions, and subagent events.
 
-- **Skills** — Claude Code–style. Each skill is a folder under `skills/` with a
-  `SKILL.md`. The agent sees a one-line index of every skill and loads a skill's
-  full instructions *on demand* via the `load_skill` tool (progressive disclosure).
-- **Memory** — in-memory conversation history per session id (lost on restart).
-- **Tool calling** — `calculator`, `current_time`, and `load_skill`, wired through
-  a transparent streaming tool-call loop (no `AgentExecutor`).
+## Features
 
-A single-page chat UI (**React 19**, bundled natively by Bun — no Vite/webpack)
-streams responses over Server-Sent Events. Styling is Tailwind via CDN with
-shadcn-style components. The page includes a sidebar where you can create,
-choose, reset, and delete sessions, plus inspect and enable/disable skills per
-session.
+- Session history persisted locally and shown in the sidebar.
+- OpenAI-compatible and Anthropic-compatible provider formats.
+- Local `config.toml` with API key, base URL, model, theme, context limit, and effort level.
+- Editable `SKILL.md` files with per-session enable/disable controls.
+- Visible tool/skill invocation, token usage, context meter, and subagent status.
+- Slash operations: `/effort low|medium|high`, `/clear`, `/compact`, `/usage`, `/new`, `/skills`, and `/settings`.
+- Built-in calculator, current-time, skill-loading, and subagent tools.
 
-## Stack
+Local data is stored under Tauri's app configuration directory (`io.dagent.desktop`). The API key is local to the device and is not committed to the repository.
 
-| Concern   | Choice |
-|-----------|--------|
-| Runtime   | Bun (runs TypeScript directly — no build step) |
-| LLM       | Claude via `@langchain/anthropic` (`claude-opus-4-8` by default) |
-| Tools     | `@langchain/core` `tool()` + zod schemas; `expr-eval` for safe math |
-| Frontend  | React 19, bundled by Bun's native HTML import (HMR in dev); Tailwind via CDN |
+## Windows release
 
-## Setup
+The app is intentionally built on GitHub Actions rather than in this environment. Push a tag such as `v0.1.0`, or run **Dagent Windows Release** manually and supply a tag. The workflow creates a GitHub Release and uploads the NSIS `.exe` installer to its release assets.
+
+## Development
 
 ```bash
-bun install
-cp .env.example .env          # then set ANTHROPIC_API_KEY
+cd dagent
+npm install
+npm run tauri dev
 ```
 
-Get an API key at https://console.anthropic.com/. Bun auto-loads `.env`.
-
-## Run
-
-```bash
-bun run dev      # hot reload (http://localhost:3000)
-# or
-bun run start
-```
-
-Open http://localhost:3000.
-
-## Try it
-
-- **Tool calling**: “What is 1234 × 9?” → a `calculator` chip appears, answer streams back.
-- **Skills**: inspect `calculator` or `poetry` in the sidebar, toggle them on/off per
-  session, then ask “Write me a haiku about the sea.” → when `poetry` is enabled,
-  a `load_skill` chip appears and the reply follows the skill's rules.
-- **Sessions**: use the sidebar to create, choose, reset, and delete independent
-  sessions. Each session has its own memory and enabled-skill set.
-- **Memory**: ask a follow-up like “what did I just ask?” → prior turns in the
-  selected session are remembered.
-- Restart the server → sessions/history are gone (in-memory by design).
-
-## Project layout
-
-```
-src/
-  index.ts           Bun.serve — routes: "/" (HTML), /api/chat, /api/sessions, /api/skills
-  agent.ts           ChatAnthropic + bindTools + streaming tool-call loop
-  memory.ts          SessionStore (sessions, enabled skills, messages)
-  skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
-  tools.ts           calculator, current_time, load_skill
-  frontend/
-    index.html       HTML entry — imports app.tsx (Bun bundles it natively)
-    app.tsx          React 19 chat UI (useChat hook streams SSE)
-skills/
-  calculator/SKILL.md
-  poetry/SKILL.md
-```
-
-## Adding a skill
-
-Create `skills/<name>/SKILL.md` with frontmatter and instructions:
-
-```markdown
----
-name: my-skill
-description: One line shown to the model so it knows when to load this.
----
-
-# My skill
-
-Detailed instructions the agent reads after calling load_skill("my-skill").
-```
-
-Restart the server — it's picked up automatically.
-
-## Configuration
-
-| Env var             | Default            | Notes |
-|---------------------|--------------------|-------|
-| `ANTHROPIC_API_KEY` | —                  | Required. |
-| `MODEL`             | `claude-opus-4-8`  | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
-| `PORT`              | `3000`             | Server port. |
+The GitHub workflow installs dependencies from `package.json` on its Windows runner.
