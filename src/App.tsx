@@ -15,11 +15,30 @@ export default function App() {
   const navigate = useNavigate();
   const [settings, setSettings] = useState(defaults); const [sessions, setSessions] = useState<Session[]>([]); const [skills, setSkills] = useState<Skill[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [subagents, setSubagents] = useState<SubagentStatus[]>([]);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null); const active = sessions.find(s => s.id === activeId);
   const contextUsed = useMemo(() => tokenCount(active), [active]);
   const replaceSession = (session: Session) => setSessions(current => [session, ...current.filter(s => s.id !== session.id)].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)));
 
-  useEffect(() => { Promise.all([api.settings(), api.sessions(), api.skills()]).then(([config, history, loadedSkills]) => { setSettings(config); setSessions(history); setSkills(loadedSkills); if (history[0]) setActiveId(history[0].id); else api.createSession().then(s => { setSessions([s]); setActiveId(s.id); }); }); }, []);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [config, history, loadedSkills] = await Promise.all([api.settings(), api.sessions(), api.skills()]);
+        setSettings(config);
+        setSessions(history);
+        setSkills(loadedSkills);
+        if (history[0]) setActiveId(history[0].id);
+        else {
+          const session = await api.createSession();
+          setSessions([session]);
+          setActiveId(session.id);
+        }
+      } catch (error) {
+        console.error("Dagent initialization failed", error);
+        setStartupError(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  }, []);
   useEffect(() => { const dark = settings.theme === "dark" || (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches); document.documentElement.dataset.theme = dark ? "dark" : "light"; }, [settings.theme]);
   useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), [active?.messages, busy]);
 
@@ -51,6 +70,8 @@ export default function App() {
       if (event.type === "error") updatePending(m => ({ ...m, error: event.message }));
     }); } catch (error) { updatePending(m => ({ ...m, error: String(error) })); } finally { setBusy(false); const latest = await api.sessions(); setSessions(latest); }
   }
+
+  if (startupError) return <div className="fatal-screen"><div className="fatal-card"><span className="eyebrow">Initialization error</span><h1>Dagent could not start</h1><p>{startupError}</p><button onClick={() => window.location.reload()}>Try again</button></div></div>;
 
   return <div className="app-shell"><Sidebar sessions={sessions} activeId={activeId} contextUsed={contextUsed} contextMax={settings.maxContextSize} subagents={subagents} onNew={createSession} onSelect={id => { setActiveId(id); navigate("/"); }} onDelete={async id => { await api.deleteSession(id); const next = sessions.filter(s => s.id !== id); setSessions(next); if (activeId === id) setActiveId(next[0]?.id ?? null); }} />
     <Routes>
