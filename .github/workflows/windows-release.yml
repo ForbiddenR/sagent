@@ -17,6 +17,10 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: "1"
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,7 +31,7 @@ jobs:
         with:
           workspaces: src-tauri
       - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Build and publish Windows installer
         uses: tauri-apps/tauri-action@v0
         env:

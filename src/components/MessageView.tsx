@@ -1,6 +1,4 @@
 import { Check, LoaderCircle, Wrench, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Message } from "../types";
 
 export function MessageView({ message }: { message: Message }) {
@@ -12,7 +10,7 @@ export function MessageView({ message }: { message: Message }) {
         <Wrench size={13} /><span>{tool.name}</span>{tool.detail && <small>{tool.detail}</small>}
       </div>)}</div>}
     {message.skills.length > 0 && <div className="skill-chips">{message.skills.map(skill => <span key={skill}>✦ {skill}</span>)}</div>}
-    {message.error ? <div className="error-box">{message.error}</div> : <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || "Working…"}</ReactMarkdown></div>}
+    {message.error ? <div className="error-box">{message.error}</div> : <div className="markdown">{message.content || "Working…"}</div>}
     {(message.inputTokens || message.outputTokens) && <div className="message-usage">↑ {message.inputTokens ?? 0} · ↓ {message.outputTokens ?? 0} tokens</div>}
   </article>;
 }

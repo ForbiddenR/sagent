@@ -773,7 +773,6 @@ async fn chat(
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
             fs::create_dir_all(&data_dir)?;
