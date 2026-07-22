@@ -414,6 +414,7 @@ struct ToolCall {
 struct ModelAnswer {
     text: String,
     tool_calls: Vec<ToolCall>,
+    output_items: Vec<Value>,
     input_tokens: usize,
     output_tokens: usize,
 }
@@ -441,7 +442,14 @@ fn tool_definitions(format: &str) -> Vec<Value> {
             json!({"type":"object","properties":{"task":{"type":"string"}},"required":["task"]}),
         ),
     ];
-    definitions.into_iter().map(|(name, description, schema)| if format == "anthropic" { json!({"name":name,"description":description,"input_schema":schema}) } else { json!({"type":"function","function":{"name":name,"description":description,"parameters":schema}}) }).collect()
+    definitions
+        .into_iter()
+        .map(|(name, description, schema)| match format {
+            "anthropic" => json!({"name":name,"description":description,"input_schema":schema}),
+            "openai_responses" => json!({"type":"function","name":name,"description":description,"parameters":schema}),
+            _ => json!({"type":"function","function":{"name":name,"description":description,"parameters":schema}}),
+        })
+        .collect()
 }
 
 fn system_prompt(skills: &[Skill], active: &[String], effort: &str) -> String {
@@ -464,18 +472,14 @@ fn endpoint(settings: &Settings) -> String {
     } else {
         settings.base_url.trim_end_matches('/')
     };
-    if settings.provider_format == "anthropic" {
-        if base.ends_with("/v1/messages") {
-            base.into()
-        } else if base.ends_with("/v1") {
-            format!("{base}/messages")
-        } else {
-            format!("{base}/v1/messages")
-        }
-    } else if base.ends_with("/chat/completions") {
-        base.into()
-    } else {
-        format!("{base}/chat/completions")
+    match settings.provider_format.as_str() {
+        "anthropic" if base.ends_with("/v1/messages") => base.into(),
+        "anthropic" if base.ends_with("/v1") => format!("{base}/messages"),
+        "anthropic" => format!("{base}/v1/messages"),
+        "openai_responses" if base.ends_with("/responses") => base.into(),
+        "openai_responses" => format!("{base}/responses"),
+        _ if base.ends_with("/chat/completions") => base.into(),
+        _ => format!("{base}/chat/completions"),
     }
 }
 
@@ -492,88 +496,153 @@ async fn call_model(
     let mut request = client
         .post(endpoint(settings))
         .header("content-type", "application/json");
-    let body = if settings.provider_format == "anthropic" {
-        request = request
-            .header("x-api-key", &settings.api_key)
-            .header("anthropic-version", "2023-06-01");
-        let mut body =
-            json!({"model":settings.model,"max_tokens":4096,"system":system,"messages":messages});
-        if tools {
-            body["tools"] = Value::Array(tool_definitions("anthropic"));
+    let body = match settings.provider_format.as_str() {
+        "anthropic" => {
+            request = request
+                .header("x-api-key", &settings.api_key)
+                .header("anthropic-version", "2023-06-01");
+            let mut body = json!({
+                "model":settings.model,
+                "max_tokens":4096,
+                "system":system,
+                "messages":messages
+            });
+            if tools {
+                body["tools"] = Value::Array(tool_definitions("anthropic"));
+            }
+            body
         }
-        body
-    } else {
-        request = request.bearer_auth(&settings.api_key);
-        let mut all = vec![json!({"role":"system","content":system})];
-        all.extend_from_slice(messages);
-        let mut body =
-            json!({"model":settings.model,"messages":all,"reasoning_effort":settings.effort});
-        if tools {
-            body["tools"] = Value::Array(tool_definitions("openai"));
+        "openai_responses" => {
+            request = request.bearer_auth(&settings.api_key);
+            let mut body = json!({
+                "model":settings.model,
+                "instructions":system,
+                "input":messages,
+                "reasoning":{"effort":settings.effort}
+            });
+            if tools {
+                body["tools"] = Value::Array(tool_definitions("openai_responses"));
+            }
+            body
         }
-        body
+        _ => {
+            request = request.bearer_auth(&settings.api_key);
+            let mut all = vec![json!({"role":"system","content":system})];
+            all.extend_from_slice(messages);
+            let mut body = json!({
+                "model":settings.model,
+                "messages":all,
+                "reasoning_effort":settings.effort
+            });
+            if tools {
+                body["tools"] = Value::Array(tool_definitions("openai"));
+            }
+            body
+        }
     };
     let response = request
         .json(&body)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
     let status = response.status();
-    let value: Value = response.json().await.map_err(|e| e.to_string())?;
+    let value: Value = response.json().await.map_err(|error| error.to_string())?;
     if !status.is_success() {
         return Err(value
             .get("error")
-            .and_then(|e| e.get("message"))
+            .and_then(|error| error.get("message"))
             .and_then(Value::as_str)
             .unwrap_or("Provider request failed")
             .to_string());
     }
-    if settings.provider_format == "anthropic" {
-        let blocks = value["content"].as_array().cloned().unwrap_or_default();
-        let text = blocks
-            .iter()
-            .filter(|b| b["type"] == "text")
-            .filter_map(|b| b["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("");
-        let calls = blocks
-            .iter()
-            .filter(|b| b["type"] == "tool_use")
-            .map(|b| ToolCall {
-                id: b["id"].as_str().unwrap_or("tool").into(),
-                name: b["name"].as_str().unwrap_or("").into(),
-                arguments: b["input"].clone(),
+
+    match settings.provider_format.as_str() {
+        "anthropic" => {
+            let blocks = value["content"].as_array().cloned().unwrap_or_default();
+            let text = blocks
+                .iter()
+                .filter(|block| block["type"] == "text")
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            let tool_calls = blocks
+                .iter()
+                .filter(|block| block["type"] == "tool_use")
+                .map(|block| ToolCall {
+                    id: block["id"].as_str().unwrap_or("tool").into(),
+                    name: block["name"].as_str().unwrap_or("").into(),
+                    arguments: block["input"].clone(),
+                })
+                .collect();
+            Ok(ModelAnswer {
+                text,
+                tool_calls,
+                output_items: vec![],
+                input_tokens: value["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize,
+                output_tokens: value["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize,
             })
-            .collect();
-        Ok(ModelAnswer {
-            text,
-            tool_calls: calls,
-            input_tokens: value["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize,
-            output_tokens: value["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize,
-        })
-    } else {
-        let message = &value["choices"][0]["message"];
-        let text = message["content"].as_str().unwrap_or("").to_string();
-        let calls = message["tool_calls"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|c| ToolCall {
-                id: c["id"].as_str().unwrap_or("tool").into(),
-                name: c["function"]["name"].as_str().unwrap_or("").into(),
-                arguments: serde_json::from_str(
-                    c["function"]["arguments"].as_str().unwrap_or("{}"),
-                )
-                .unwrap_or(json!({})),
+        }
+        "openai_responses" => {
+            let output_items = value["output"].as_array().cloned().unwrap_or_default();
+            let mut text = output_items
+                .iter()
+                .filter(|item| item["type"] == "message")
+                .filter_map(|item| item["content"].as_array())
+                .flatten()
+                .filter(|content| content["type"] == "output_text")
+                .filter_map(|content| content["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            if text.is_empty() {
+                text = value["output_text"].as_str().unwrap_or("").to_string();
+            }
+            let tool_calls = output_items
+                .iter()
+                .filter(|item| item["type"] == "function_call")
+                .map(|item| ToolCall {
+                    id: item["call_id"]
+                        .as_str()
+                        .or_else(|| item["id"].as_str())
+                        .unwrap_or("tool")
+                        .into(),
+                    name: item["name"].as_str().unwrap_or("").into(),
+                    arguments: serde_json::from_str(item["arguments"].as_str().unwrap_or("{}"))
+                        .unwrap_or_else(|_| json!({})),
+                })
+                .collect();
+            Ok(ModelAnswer {
+                text,
+                tool_calls,
+                output_items,
+                input_tokens: value["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize,
+                output_tokens: value["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize,
             })
-            .collect();
-        Ok(ModelAnswer {
-            text,
-            tool_calls: calls,
-            input_tokens: value["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize,
-            output_tokens: value["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize,
-        })
+        }
+        _ => {
+            let message = &value["choices"][0]["message"];
+            let text = message["content"].as_str().unwrap_or("").to_string();
+            let tool_calls = message["tool_calls"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|call| ToolCall {
+                    id: call["id"].as_str().unwrap_or("tool").into(),
+                    name: call["function"]["name"].as_str().unwrap_or("").into(),
+                    arguments: serde_json::from_str(
+                        call["function"]["arguments"].as_str().unwrap_or("{}"),
+                    )
+                    .unwrap_or_else(|_| json!({})),
+                })
+                .collect();
+            Ok(ModelAnswer {
+                text,
+                tool_calls,
+                output_items: vec![],
+                input_tokens: value["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as usize,
+                output_tokens: value["usage"]["completion_tokens"].as_u64().unwrap_or(0) as usize,
+            })
+        }
     }
 }
 
@@ -713,27 +782,105 @@ async fn chat(
     let mut total_out = 0;
     let outcome: Result<(), String> = async {
         for _ in 0..6 {
-            let answer = call_model(&settings, &system, &transcript, true).await?; total_in += answer.input_tokens; total_out += answer.output_tokens;
-            if answer.tool_calls.is_empty() { final_text.push_str(&answer.text); break; }
-            if settings.provider_format == "anthropic" {
-                let mut blocks = vec![]; if !answer.text.is_empty() { blocks.push(json!({"type":"text","text":answer.text})); } for call in &answer.tool_calls { blocks.push(json!({"type":"tool_use","id":call.id,"name":call.name,"input":call.arguments})); } transcript.push(json!({"role":"assistant","content":blocks}));
-            } else {
-                transcript.push(json!({"role":"assistant","content":answer.text,"tool_calls":answer.tool_calls.iter().map(|c| json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>() }));
+            let answer = call_model(&settings, &system, &transcript, true).await?;
+            total_in += answer.input_tokens;
+            total_out += answer.output_tokens;
+            if answer.tool_calls.is_empty() {
+                final_text.push_str(&answer.text);
+                break;
             }
+
+            match settings.provider_format.as_str() {
+                "anthropic" => {
+                    let mut blocks = vec![];
+                    if !answer.text.is_empty() {
+                        blocks.push(json!({"type":"text","text":answer.text}));
+                    }
+                    for call in &answer.tool_calls {
+                        blocks.push(json!({
+                            "type":"tool_use",
+                            "id":call.id,
+                            "name":call.name,
+                            "input":call.arguments
+                        }));
+                    }
+                    transcript.push(json!({"role":"assistant","content":blocks}));
+                }
+                "openai_responses" => transcript.extend(answer.output_items.clone()),
+                _ => transcript.push(json!({
+                    "role":"assistant",
+                    "content":answer.text,
+                    "tool_calls":answer.tool_calls.iter().map(|call| json!({
+                        "id":call.id,
+                        "type":"function",
+                        "function":{
+                            "name":call.name,
+                            "arguments":call.arguments.to_string()
+                        }
+                    })).collect::<Vec<_>>()
+                })),
+            }
+
             let mut anthropic_results = vec![];
             for call in answer.tool_calls {
-                let detail = call.arguments.as_object().and_then(|o| o.values().next()).and_then(Value::as_str).map(|s| s.chars().take(80).collect());
-                on_event.send(ChatEvent::ToolStarted { name: call.name.clone(), detail: detail.clone() }).map_err(|e| e.to_string())?;
-                if call.name == "load_skill" { if let Some(name) = call.arguments["name"].as_str() { used_skills.push(name.to_string()); } }
-                let result = execute_tool(&call, &enabled, &settings, &system, &on_event).await; let success = result.is_ok(); let content = result.unwrap_or_else(|e| format!("Error: {e}"));
-                activities.push(ToolActivity { name: call.name.clone(), detail: detail.clone(), status: if success { "completed" } else { "failed" }.into() });
-                on_event.send(ChatEvent::ToolFinished { name: call.name.clone(), detail, success }).map_err(|e| e.to_string())?;
-                if settings.provider_format == "anthropic" { anthropic_results.push(json!({"type":"tool_result","tool_use_id":call.id,"content":content})); } else { transcript.push(json!({"role":"tool","tool_call_id":call.id,"content":content})); }
+                let detail = call
+                    .arguments
+                    .as_object()
+                    .and_then(|object| object.values().next())
+                    .and_then(Value::as_str)
+                    .map(|value| value.chars().take(80).collect());
+                on_event
+                    .send(ChatEvent::ToolStarted {
+                        name: call.name.clone(),
+                        detail: detail.clone(),
+                    })
+                    .map_err(|error| error.to_string())?;
+                if call.name == "load_skill" {
+                    if let Some(name) = call.arguments["name"].as_str() {
+                        used_skills.push(name.to_string());
+                    }
+                }
+                let result = execute_tool(&call, &enabled, &settings, &system, &on_event).await;
+                let success = result.is_ok();
+                let content = result.unwrap_or_else(|error| format!("Error: {error}"));
+                activities.push(ToolActivity {
+                    name: call.name.clone(),
+                    detail: detail.clone(),
+                    status: if success { "completed" } else { "failed" }.into(),
+                });
+                on_event
+                    .send(ChatEvent::ToolFinished {
+                        name: call.name.clone(),
+                        detail,
+                        success,
+                    })
+                    .map_err(|error| error.to_string())?;
+
+                match settings.provider_format.as_str() {
+                    "anthropic" => anthropic_results.push(json!({
+                        "type":"tool_result",
+                        "tool_use_id":call.id,
+                        "content":content
+                    })),
+                    "openai_responses" => transcript.push(json!({
+                        "type":"function_call_output",
+                        "call_id":call.id,
+                        "output":content
+                    })),
+                    _ => transcript.push(json!({
+                        "role":"tool",
+                        "tool_call_id":call.id,
+                        "content":content
+                    })),
+                }
             }
-            if settings.provider_format == "anthropic" { transcript.push(json!({"role":"user","content":anthropic_results})); }
+            if settings.provider_format == "anthropic" {
+                transcript.push(json!({"role":"user","content":anthropic_results}));
+            }
         }
         Ok(())
-    }.await;
+    }
+    .await;
     if let Err(error) = outcome {
         let _ = on_event.send(ChatEvent::Error {
             message: error.clone(),

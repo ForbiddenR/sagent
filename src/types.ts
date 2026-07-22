@@ -1,4 +1,4 @@
-export type ProviderFormat = "openai" | "anthropic";
+export type ProviderFormat = "openai" | "openai_responses" | "anthropic";
 export type Theme = "system" | "light" | "dark";
 export type Effort = "low" | "medium" | "high";
 
