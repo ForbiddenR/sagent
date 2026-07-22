@@ -16,7 +16,12 @@ Local data is stored under Tauri's app configuration directory (`io.dagent.deskt
 
 ## Windows release
 
-The app is intentionally built on GitHub Actions rather than in this environment. Push a tag such as `v0.1.0`, or run **Dagent Windows Release** manually and supply a tag. The workflow creates a GitHub Release and uploads the NSIS `.exe` installer to its release assets.
+The app is intentionally built on GitHub Actions rather than in this environment. Push a tag such as `v0.1.0`, or run **Dagent Windows Release** manually and supply a tag. The workflow creates a GitHub Release with two Windows assets:
+
+- The NSIS `.exe` installer.
+- `Dagent-portable-x64.exe`, which runs directly without installation.
+
+Both versions store configuration and session data in the standard Windows application-data directory.
 
 ## Development
 

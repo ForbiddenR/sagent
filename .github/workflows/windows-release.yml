@@ -39,3 +39,12 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: false
+
+      - name: Upload portable Windows executable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          Copy-Item "src-tauri/target/release/dagent.exe" "Dagent-portable-x64.exe"
+          gh release upload "$env:RELEASE_TAG" "Dagent-portable-x64.exe" --clobber
