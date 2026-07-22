@@ -15,7 +15,7 @@ export default function App() {
   const navigate = useNavigate();
   const [settings, setSettings] = useState(defaults); const [sessions, setSessions] = useState<Session[]>([]); const [skills, setSkills] = useState<Skill[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [subagents, setSubagents] = useState<SubagentStatus[]>([]);
-  const [startupError, setStartupError] = useState<string | null>(null);
+  const [models, setModels] = useState<string[]>([]); const [startupError, setStartupError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null); const active = sessions.find(s => s.id === activeId);
   const contextUsed = useMemo(() => tokenCount(active), [active]);
   const replaceSession = (session: Session) => setSessions(current => [session, ...current.filter(s => s.id !== session.id)].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)));
@@ -41,18 +41,29 @@ export default function App() {
   }, []);
   useEffect(() => { const dark = settings.theme === "dark" || (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches); document.documentElement.dataset.theme = dark ? "dark" : "light"; }, [settings.theme]);
   useEffect(() => {
+    let cancelled = false;
+    if (!settings.apiKey.trim()) { setModels([]); return; }
+    void api.models(settings).then(available => { if (!cancelled) setModels(available); }).catch(error => {
+      console.warn("Could not fetch provider models", error);
+      if (!cancelled) setModels([]);
+    });
+    return () => { cancelled = true; };
+  }, [settings.apiKey, settings.baseUrl, settings.providerFormat]);
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [active?.messages, busy]);
 
   async function createSession() { const session = await api.createSession(); replaceSession(session); setActiveId(session.id); navigate("/"); }
   async function runCommand(text: string) {
-    const [command, arg] = text.slice(1).split(/\s+/, 2);
+    const [command, ...args] = text.slice(1).trim().split(/\s+/); const arg = args.join(" ");
     if (command === "new") return createSession();
     if (command === "settings" || command === "skills") { navigate(`/${command}`); return; }
+    if (command === "effort" && ["low", "medium", "high"].includes(arg)) { const next = { ...settings, effort: arg as Settings["effort"] }; setSettings(await api.saveSettings(next)); return; }
+    if (command === "model" && arg) { const next = { ...settings, model: arg }; setSettings(await api.saveSettings(next)); return; }
     if (!activeId) return;
     if (command === "clear") return replaceSession(await api.clearSession(activeId));
     if (command === "compact") return replaceSession(await api.compactSession(activeId));
-    if (command === "effort" && ["low", "medium", "high"].includes(arg)) { const next = { ...settings, effort: arg as Settings["effort"] }; setSettings(await api.saveSettings(next)); return; }
+    if (command === "model") { const msg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Current model: **${settings.model}**. Type \`/model <model-id>\` to change it.`, createdAt: new Date().toISOString(), tools: [], skills: [] }; if (active) replaceSession({ ...active, messages: [...active.messages, msg] }); return; }
     if (command === "usage") { const msg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Context usage: **${contextUsed.toLocaleString()} / ${settings.maxContextSize.toLocaleString()} tokens** (${Math.round(contextUsed/settings.maxContextSize*100)}%).`, createdAt: new Date().toISOString(), tools: [], skills: [] }; if (active) replaceSession({ ...active, messages: [...active.messages, msg] }); return; }
   }
   async function send(text: string) {
@@ -77,7 +88,7 @@ export default function App() {
 
   return <div className="app-shell"><Sidebar sessions={sessions} activeId={activeId} contextUsed={contextUsed} contextMax={settings.maxContextSize} subagents={subagents} onNew={createSession} onSelect={id => { setActiveId(id); navigate("/"); }} onDelete={async id => { await api.deleteSession(id); const next = sessions.filter(s => s.id !== id); setSessions(next); if (activeId === id) setActiveId(next[0]?.id ?? null); }} />
     <Routes>
-      <Route path="/" element={<main className="chat-page"><header className="chat-header"><div><span className="eyebrow">Session</span><h1>{active?.title ?? "New session"}</h1></div><div className={`live-state ${busy ? "busy" : ""}`}><i />{busy ? "Agent working" : "Ready"}</div></header><section className="messages">{!active?.messages.length && <div className="welcome"><span>✦</span><h2>What are we working on?</h2><p>Dagent can use tools, load skills, and delegate focused tasks to subagents.</p></div>}{active?.messages.map(message => <MessageView key={message.id} message={message} />)}<div ref={bottomRef} /></section><Composer busy={busy} effort={settings.effort} onSend={send} /></main>} />
+      <Route path="/" element={<main className="chat-page"><header className="chat-header"><div><span className="eyebrow">Session</span><h1>{active?.title ?? "New session"}</h1></div><div className={`live-state ${busy ? "busy" : ""}`}><i />{busy ? "Agent working" : "Ready"}</div></header><section className="messages">{!active?.messages.length && <div className="welcome"><span>✦</span><h2>What are we working on?</h2><p>Dagent can use tools, load skills, and delegate focused tasks to subagents.</p></div>}{active?.messages.map(message => <MessageView key={message.id} message={message} />)}<div ref={bottomRef} /></section><Composer busy={busy} effort={settings.effort} model={settings.model} models={models} onSend={send} /></main>} />
       <Route path="/skills" element={<SkillsPage skills={skills} activeSkills={active?.activeSkills ?? []} onSave={async skill => { const saved = await api.saveSkill(skill); setSkills(await api.skills()); return void saved; }} onDelete={async name => { await api.deleteSkill(name); setSkills(await api.skills()); }} onToggle={async (name, enabled) => { if (activeId) replaceSession(await api.toggleSkill(activeId, name, enabled)); }} />} />
       <Route path="/settings" element={<SettingsPage settings={settings} onSave={async next => { setSettings(await api.saveSettings(next)); }} />} />
       <Route path="*" element={<Navigate to="/" replace />} />

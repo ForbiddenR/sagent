@@ -4,6 +4,7 @@ import type { ChatEvent, Session, Settings, Skill } from "./types";
 export const api = {
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
+  models: (settings: Settings) => invoke<string[]>("list_models", { settings }),
   sessions: () => invoke<Session[]>("list_sessions"),
   createSession: () => invoke<Session>("create_session"),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),

@@ -483,6 +483,89 @@ fn endpoint(settings: &Settings) -> String {
     }
 }
 
+fn models_endpoint(settings: &Settings) -> String {
+    let base = if settings.base_url.trim().is_empty() {
+        if settings.provider_format == "anthropic" {
+            "https://api.anthropic.com"
+        } else {
+            "https://api.openai.com/v1"
+        }
+    } else {
+        settings.base_url.trim_end_matches('/')
+    };
+    if settings.provider_format == "anthropic" {
+        if let Some(prefix) = base.strip_suffix("/v1/messages") {
+            return format!("{prefix}/v1/models");
+        }
+        if base.ends_with("/v1/models") {
+            return base.into();
+        }
+        if base.ends_with("/v1") {
+            return format!("{base}/models");
+        }
+        return format!("{base}/v1/models");
+    }
+    if let Some(prefix) = base.strip_suffix("/chat/completions") {
+        return format!("{prefix}/models");
+    }
+    if let Some(prefix) = base.strip_suffix("/responses") {
+        return format!("{prefix}/models");
+    }
+    if base.ends_with("/models") {
+        base.into()
+    } else {
+        format!("{base}/models")
+    }
+}
+
+#[tauri::command]
+async fn list_models(settings: Settings) -> Result<Vec<String>, String> {
+    if settings.api_key.trim().is_empty() {
+        return Err("API key is not configured.".into());
+    }
+    let client = reqwest::Client::new();
+    let mut request = client.get(models_endpoint(&settings));
+    if settings.provider_format == "anthropic" {
+        request = request
+            .header("x-api-key", &settings.api_key)
+            .header("anthropic-version", "2023-06-01");
+    } else {
+        request = request.bearer_auth(&settings.api_key);
+    }
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    let status = response.status();
+    let body = response.text().await.map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_str(&body)
+        .map_err(|_| format!("Provider returned an invalid model list ({status})."))?;
+    if !status.is_success() {
+        return Err(value
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .or_else(|| value.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("Could not fetch models from the provider.")
+            .to_string());
+    }
+    let items = value
+        .get("data")
+        .or_else(|| value.get("models"))
+        .and_then(Value::as_array)
+        .or_else(|| value.as_array())
+        .ok_or("Provider response did not contain a model list.")?;
+    let mut models = items
+        .iter()
+        .filter_map(|item| {
+            item.as_str()
+                .or_else(|| item.get("id").and_then(Value::as_str))
+                .or_else(|| item.get("name").and_then(Value::as_str))
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    models.sort_by_key(|model| model.to_lowercase());
+    models.dedup();
+    Ok(models)
+}
+
 async fn call_model(
     settings: &Settings,
     system: &str,
@@ -709,23 +792,46 @@ async fn execute_tool(
 
 fn conversation_messages(session: &Session, format: &str, max_context: usize) -> Vec<Value> {
     let mut budget = 0usize;
-    let mut selected = vec![];
+    let mut selected: Vec<(&Message, String)> = vec![];
     for message in session.messages.iter().rev() {
         let estimate = message.content.len() / 4 + 8;
         if budget + estimate > max_context {
+            if selected.is_empty() {
+                let max_chars = max_context.saturating_sub(8).saturating_mul(4).max(256);
+                let char_count = message.content.chars().count();
+                let content = if char_count > max_chars {
+                    let head_len = max_chars / 3;
+                    let tail_len = max_chars.saturating_sub(head_len);
+                    let head = message.content.chars().take(head_len).collect::<String>();
+                    let mut tail = message
+                        .content
+                        .chars()
+                        .rev()
+                        .take(tail_len)
+                        .collect::<Vec<_>>();
+                    tail.reverse();
+                    format!(
+                        "{head}\n\n[... middle truncated to fit context ...]\n\n{}",
+                        tail.into_iter().collect::<String>()
+                    )
+                } else {
+                    message.content.clone()
+                };
+                selected.push((message, content));
+            }
             break;
         }
         budget += estimate;
-        selected.push(message);
+        selected.push((message, message.content.clone()));
     }
     selected.reverse();
     selected
         .into_iter()
-        .map(|m| {
+        .map(|(message, content)| {
             if format == "anthropic" {
-                json!({"role":m.role,"content":[{"type":"text","text":m.content}]})
+                json!({"role":message.role,"content":[{"type":"text","text":content}]})
             } else {
-                json!({"role":m.role,"content":m.content})
+                json!({"role":message.role,"content":content})
             }
         })
         .collect()
@@ -937,6 +1043,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            list_models,
             list_sessions,
             create_session,
             delete_session,
