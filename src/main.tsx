@@ -22,6 +22,7 @@ class ErrorBoundary extends React.Component<React.PropsWithChildren, { error: Er
           <span className="eyebrow">Startup error</span>
           <h1>Dagent could not render</h1>
           <p>{this.state.error.message}</p>
+          <details><summary>Technical details</summary><pre>{this.state.error.stack ?? this.state.error.message}</pre></details>
           <button onClick={() => window.location.reload()}>Reload application</button>
         </div>
       </div>;
