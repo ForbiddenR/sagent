@@ -4,6 +4,7 @@ import { api } from "./api";
 import { Composer } from "./components/Composer";
 import { MessageView } from "./components/MessageView";
 import { Sidebar } from "./components/Sidebar";
+import { WorkspaceInspector } from "./components/WorkspaceInspector";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SkillsPage } from "./pages/SkillsPage";
 import type { ChatEvent, Message, Session, Settings, Skill, SubagentStatus } from "./types";
@@ -52,14 +53,22 @@ export default function App() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [active?.messages, busy]);
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") { event.preventDefault(); void createSession(); }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => { window.removeEventListener("keydown", handleShortcut); };
+  }, []);
 
   async function createSession() { const session = await api.createSession(); replaceSession(session); setActiveId(session.id); navigate("/"); }
+  async function changeModel(model: string) { const next = { ...settings, model }; setSettings(await api.saveSettings(next)); }
   async function runCommand(text: string) {
     const [command, ...args] = text.slice(1).trim().split(/\s+/); const arg = args.join(" ");
     if (command === "new") return createSession();
     if (command === "settings" || command === "skills") { navigate(`/${command}`); return; }
     if (command === "effort" && ["low", "medium", "high"].includes(arg)) { const next = { ...settings, effort: arg as Settings["effort"] }; setSettings(await api.saveSettings(next)); return; }
-    if (command === "model" && arg) { const next = { ...settings, model: arg }; setSettings(await api.saveSettings(next)); return; }
+    if (command === "model" && arg) { await changeModel(arg); return; }
     if (!activeId) return;
     if (command === "clear") return replaceSession(await api.clearSession(activeId));
     if (command === "compact") return replaceSession(await api.compactSession(activeId));
@@ -86,9 +95,9 @@ export default function App() {
 
   if (startupError) return <div className="fatal-screen"><div className="fatal-card"><span className="eyebrow">Initialization error</span><h1>Dagent could not start</h1><p>{startupError}</p><button onClick={() => window.location.reload()}>Try again</button></div></div>;
 
-  return <div className="app-shell"><Sidebar sessions={sessions} activeId={activeId} contextUsed={contextUsed} contextMax={settings.maxContextSize} subagents={subagents} onNew={createSession} onSelect={id => { setActiveId(id); navigate("/"); }} onDelete={async id => { await api.deleteSession(id); const next = sessions.filter(s => s.id !== id); setSessions(next); if (activeId === id) setActiveId(next[0]?.id ?? null); }} />
+  return <div className="app-shell"><Sidebar sessions={sessions} activeId={activeId} onNew={createSession} onSelect={id => { setActiveId(id); navigate("/"); }} onDelete={async id => { await api.deleteSession(id); const next = sessions.filter(s => s.id !== id); setSessions(next); if (activeId === id) setActiveId(next[0]?.id ?? null); }} />
     <Routes>
-      <Route path="/" element={<main className="chat-page"><header className="chat-header"><div><span className="eyebrow">Session</span><h1>{active?.title ?? "New session"}</h1></div><div className={`live-state ${busy ? "busy" : ""}`}><i />{busy ? "Agent working" : "Ready"}</div></header><section className="messages">{!active?.messages.length && <div className="welcome"><span>✦</span><h2>What are we working on?</h2><p>Dagent can use tools, load skills, and delegate focused tasks to subagents.</p></div>}{active?.messages.map(message => <MessageView key={message.id} message={message} />)}<div ref={bottomRef} /></section><Composer busy={busy} effort={settings.effort} model={settings.model} models={models} onSend={send} /></main>} />
+      <Route path="/" element={<div className="agent-workspace"><main className="chat-page"><header className="chat-header"><div className="chat-title"><span className="eyebrow">Active session</span><h1>{active?.title ?? "New session"}</h1></div><div className="topbar-controls"><span className="provider-pill">{settings.providerFormat === "anthropic" ? "Anthropic" : settings.providerFormat === "openai_responses" ? "OpenAI Responses" : "OpenAI Chat"}</span><label className="model-select"><span>Model</span><select value={settings.model} onChange={e => void changeModel(e.target.value)}>{Array.from(new Set([settings.model, ...models])).map(model => <option key={model} value={model}>{model}</option>)}</select></label><div className={`live-state ${busy ? "busy" : ""}`}><i />{busy ? "Working" : "Ready"}</div><button className="topbar-button" onClick={() => navigate("/settings")}>Configure</button></div></header><section className="messages">{!active?.messages.length && <div className="welcome"><span>✦</span><h2>Start a focused session</h2><p>Ask Dagent to reason, use tools, load a skill, or delegate work to a subagent.</p></div>}{active?.messages.map(message => <MessageView key={message.id} message={message} />)}<div ref={bottomRef} /></section><Composer busy={busy} effort={settings.effort} model={settings.model} models={models} onSend={send} /></main><WorkspaceInspector session={active} busy={busy} contextUsed={contextUsed} contextMax={settings.maxContextSize} subagents={subagents} /></div>} />
       <Route path="/skills" element={<SkillsPage skills={skills} activeSkills={active?.activeSkills ?? []} onSave={async skill => { const saved = await api.saveSkill(skill); setSkills(await api.skills()); return void saved; }} onDelete={async name => { await api.deleteSkill(name); setSkills(await api.skills()); }} onToggle={async (name, enabled) => { if (activeId) replaceSession(await api.toggleSkill(activeId, name, enabled)); }} />} />
       <Route path="/settings" element={<SettingsPage settings={settings} onSave={async next => { setSettings(await api.saveSettings(next)); }} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
