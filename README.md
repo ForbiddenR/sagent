@@ -13,7 +13,8 @@ demonstrates a few things in a minimal, readable way:
   streaming tokens, a tool-round cap, and an abort-on-stall timeout that notifies
   the user when the API is unresponsive.
 - **Tools** — `calculator`, `current_time`, `read_file`, `write_file`, `run_bash`
-  (with human-in-the-loop approval), `search_workspace` (semantic, RAG-backed), and
+  (with human-in-the-loop approval), `search_workspace` (semantic, RAG-backed),
+  `web_search_exa` / `web_fetch_exa` (Exa web search and page fetch), and
   `load_skill`.
 - **Workspace** — each session gets a private folder for files; upload, browse,
   and edit them from the UI.
@@ -31,7 +32,7 @@ session, and a file browser/editor for the session workspace.
 | Runtime   | Bun (runs TypeScript directly — no build step) |
 | LLM       | Claude via `@langchain/anthropic` (`claude-opus-4-8` by default) |
 | Agent     | `@langchain/langgraph` `StateGraph` (model/tools nodes, conditional routing) |
-| Tools     | `@langchain/core` `tool()` + zod schemas; `expr-eval` for safe math |
+| Tools     | `@langchain/core` `tool()` + zod schemas; `expr-eval` for safe math; hosted Exa MCP for web search/fetch (no API key required) |
 | Retrieval | `@langchain/textsplitters` + in-memory vector store (`search_workspace`) |
 | Frontend  | React 19, bundled by Bun's native HTML import (HMR in dev); Tailwind via CDN |
 
@@ -39,7 +40,7 @@ session, and a file browser/editor for the session workspace.
 
 ```bash
 bun install
-cp .env.example .env          # then set ANTHROPIC_API_KEY
+cp .env.example .env          # then set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN
 ```
 
 Get an API key at https://console.anthropic.com/. Bun auto-loads `.env`.
@@ -84,7 +85,8 @@ src/
   rag.ts             in-memory vector store backing search_workspace
   skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
   tools.ts           calculator, current_time, read_file, write_file, run_bash,
-                     search_workspace, load_skill
+                     search_workspace, web_search_exa, web_fetch_exa, load_skill
+  exa.ts             hosted Exa MCP client for web_search_exa / web_fetch_exa
   frontend/
     index.html       HTML entry — imports app.tsx (Bun bundles it natively)
     app.tsx          React 19 chat UI (streams SSE; approval cards, file editor)
@@ -116,9 +118,11 @@ All options are read from the environment (Bun auto-loads `.env`). See `.env.exa
 
 | Env var               | Default              | Notes |
 |-----------------------|----------------------|-------|
-| `ANTHROPIC_API_KEY`   | —                    | Required. Get one at https://console.anthropic.com/. |
+| `ANTHROPIC_API_KEY`   | —                    | Console API key from https://console.anthropic.com/. Required unless `ANTHROPIC_AUTH_TOKEN` is set. |
+| `ANTHROPIC_AUTH_TOKEN`| —                    | Bearer token (Claude Code / OAuth / some gateways). Used if `ANTHROPIC_API_KEY` is unset. |
 | `MODEL`               | `claude-opus-4-8`    | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
 | `ANTHROPIC_BASE_URL`  | Anthropic API        | Optional. Point at an Anthropic-compatible endpoint (gateway/proxy, e.g. LiteLLM, Cloudflare AI Gateway, a corporate proxy). Must speak the Anthropic `/v1/messages` API. Leave unset for the default. |
+| `EXA_API_KEY`         | —                    | Optional. Higher rate limits for `web_search_exa` / `web_fetch_exa`. Without it, tools use Exa's hosted MCP at https://mcp.exa.ai/mcp (free, rate-limited). |
 | `TOP_P`               | `1`                  | Top-p sampling for the model. |
 | `MODEL_TIMEOUT_MS`    | `60000`              | Max ms to wait for the next model chunk before treating the request as timed out (a streaming response is not interrupted; only total silence trips it). Emits a timeout notification so the user knows to check the API. |
 | `MAX_MODEL_MESSAGES`  | `100`                | Max recent messages sent back to the model for context. Full frontend session messages are still persisted separately. |
@@ -134,6 +138,7 @@ Pass them inline as a single command prefix. Build the binary first with
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... \
+# or: ANTHROPIC_AUTH_TOKEN=... \
 MODEL=claude-opus-4-8 \
 ANTHROPIC_BASE_URL=https://gateway.example.com/anthropic \
 TOP_P=1 \

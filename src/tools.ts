@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Parser } from "expr-eval";
 import type { Skill } from "./skills.ts";
 import { ragStore } from "./rag.ts";
+import { webFetchExa, webSearchExa } from "./exa.ts";
 
 const exprParser = new Parser();
 const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
@@ -67,6 +68,61 @@ const calculator = tool(
       "Supports + - * / % ^, parentheses, and functions like sqrt, abs, min, max, round.",
     schema: z.object({
       expression: z.string().describe("The arithmetic expression, e.g. '1234 * 9'"),
+    }),
+  },
+);
+
+const webSearch = tool(
+  async ({ query, numResults }) => {
+    try {
+      return await webSearchExa(query, numResults);
+    } catch (err) {
+      return `Error: ${(err as Error).message}`;
+    }
+  },
+  {
+    name: "web_search_exa",
+    description:
+      "Search the web for any topic and get clean, ready-to-use content. " +
+      "Best for current information, news, facts, people, or companies. " +
+      'Describe the ideal page, not keywords (e.g. "blog post comparing React and Vue performance"). ' +
+      "Use category:people / category:company to search LinkedIn profiles or companies. " +
+      "If highlights are insufficient, follow up with web_fetch_exa on the best URLs.",
+    schema: z.object({
+      query: z
+        .string()
+        .describe(
+          "Natural language search query. Semantically rich description of the ideal page, not just keywords. Optionally include category:<type> (company, people).",
+        ),
+      numResults: z
+        .number()
+        .optional()
+        .describe("Number of search results to return (default: 10)."),
+    }),
+  },
+);
+
+const webFetch = tool(
+  async ({ urls, maxCharacters }) => {
+    try {
+      const list = Array.isArray(urls) ? urls : [urls];
+      return await webFetchExa(list, maxCharacters);
+    } catch (err) {
+      return `Error: ${(err as Error).message}`;
+    }
+  },
+  {
+    name: "web_fetch_exa",
+    description:
+      "Read a webpage's full content as clean markdown. Use after web_search_exa when highlights are insufficient, or to read any known URL. Batch multiple URLs in one call.",
+    schema: z.object({
+      urls: z
+        .union([z.string(), z.array(z.string())])
+        .describe("URLs to read. Batch multiple URLs in one call."),
+      maxCharacters: z
+        .number()
+        .optional()
+        .describe("Maximum characters to extract per page (default: 3000)."),
     }),
   },
 );
@@ -210,7 +266,17 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     },
   );
 
-  return [calculator, currentTime, readFile, writeFile, runBash, searchWorkspace, loadSkill];
+  return [
+    calculator,
+    currentTime,
+    readFile,
+    writeFile,
+    runBash,
+    searchWorkspace,
+    webSearch,
+    webFetch,
+    loadSkill,
+  ];
 }
 
 export type AgentTool = StructuredToolInterface;

@@ -1,3 +1,4 @@
+import { Anthropic } from "@anthropic-ai/sdk";
 import { ChatAnthropic } from "@langchain/anthropic";
 import {
   SystemMessage,
@@ -22,7 +23,19 @@ const TOP_P = Number(process.env.TOP_P ?? "1");
 const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS ?? "60000");
 
 const TIMEOUT_HINT =
-  "The request to the AI model timed out. Please check the API — verify your ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL (if set), network connectivity, and that the model is available, then try again.";
+  "The request to the AI model timed out. Please check the API — verify your ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL (if set), network connectivity, and that the model is available, then try again.";
+
+/** Console API keys (`X-Api-Key`) or Claude Code / OAuth bearer tokens. */
+export function anthropicAuth() {
+  const apiKey = process.env.ANTHROPIC_API_KEY || undefined;
+  const authToken = process.env.ANTHROPIC_AUTH_TOKEN || undefined;
+  return { apiKey, authToken };
+}
+
+export function hasAnthropicAuth() {
+  const { apiKey, authToken } = anthropicAuth();
+  return Boolean(apiKey || authToken);
+}
 
 /** Thrown when the model produces no chunk within MODEL_TIMEOUT_MS. */
 class StallTimeoutError extends Error {
@@ -170,14 +183,28 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
   const allSkillNames = allSkills.map((s) => s.name);
 
   const llm = (skills: Skill[], sessionId: string) => {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY is not set. Add it to .env (see .env.example).");
+    const { apiKey, authToken } = anthropicAuth();
+    if (!apiKey && !authToken) {
+      throw new Error(
+        "Neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set. Add one to .env (see .env.example).",
+      );
     }
     return new ChatAnthropic({
       model: MODEL,
       maxTokens: 4096,
-      apiKey: process.env.ANTHROPIC_API_KEY,
       topP: TOP_P,
+      ...(apiKey
+        ? { apiKey }
+        : {
+            // ChatAnthropic requires an API key unless we supply the client.
+            // ANTHROPIC_AUTH_TOKEN is a Bearer token (Claude Code / OAuth), not an API key.
+            createClient: (options: ConstructorParameters<typeof Anthropic>[0]) =>
+              new Anthropic({
+                ...options,
+                apiKey: options?.apiKey ?? null,
+                authToken: options?.authToken ?? authToken,
+              }),
+          }),
       // Optional: point at an Anthropic-compatible third-party endpoint
       // (gateway/proxy). Left undefined → talks to the default Anthropic API.
       ...(process.env.ANTHROPIC_BASE_URL ? { anthropicApiUrl: process.env.ANTHROPIC_BASE_URL } : {}),
@@ -192,6 +219,7 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       "Use `read_file` and `write_file` to read/write files in your private session workspace.",
       "Use `run_bash` to execute shell commands in your session workspace.",
       "Use `search_workspace` to search all workspace files by semantic meaning (better than read_file when you don't know the exact filename).",
+      "Use `web_search_exa` to search the public web for current information. Follow up with `web_fetch_exa` to read full pages when search highlights are not enough.",
       "",
       "Enabled skills (call `load_skill` with the skill name to read its full",
       "instructions BEFORE doing a task it covers):",

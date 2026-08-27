@@ -1,5 +1,5 @@
 import index from "./frontend/index.html";
-import { createAgent, type Agent, type ApprovalRequest } from "./agent.ts";
+import { createAgent, hasAnthropicAuth, type Agent, type ApprovalRequest } from "./agent.ts";
 import { deleteSkill, loadSkills, saveSkill, type Skill, type SkillInput } from "./skills.ts";
 import { memory, type ClientMessage } from "./memory.ts";
 
@@ -7,8 +7,10 @@ const PORT = Number(process.env.PORT) || 3000;
 const DEV = process.env.NODE_ENV !== "production";
 const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.warn("⚠️  ANTHROPIC_API_KEY is not set — chat requests will fail. See .env.example.");
+if (!hasAnthropicAuth()) {
+  console.warn(
+    "⚠️  Neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set — chat requests will fail. See .env.example.",
+  );
 }
 
 let skills: Skill[] = [];
