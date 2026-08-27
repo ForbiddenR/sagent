@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { SessionFile, SessionSummary, SkillSummary } from "../types";
+import type { SessionFile, SessionSummary, SkillSummary, SubagentSummary } from "../types";
 import { formatTime } from "../utils";
 
 interface SidebarProps {
@@ -7,6 +7,7 @@ interface SidebarProps {
   activeSessionId: string | null;
   files: SessionFile[];
   skills: SkillSummary[];
+  subagents: SubagentSummary[];
   activeSkills: Set<string>;
   onLoadSession: (id: string) => void;
   onCreateSession: () => void;
@@ -20,7 +21,7 @@ interface SidebarProps {
 
 type SidebarPanel = "workspace" | "skills";
 
-export function Sidebar({ sessions, activeSessionId, files, skills, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill }: SidebarProps) {
+export function Sidebar({ sessions, activeSessionId, files, skills, subagents, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill }: SidebarProps) {
   const [panel, setPanel] = useState<SidebarPanel>("workspace");
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const visibleFiles = files.filter((file) => !file.isDir);
@@ -129,6 +130,14 @@ export function Sidebar({ sessions, activeSessionId, files, skills, activeSkills
               </div>
             );
           })}
+          <h2 className="pt-2 text-xs font-semibold uppercase tracking-wide muted">Subagents</h2>
+          <div className="muted text-xs">{subagents.length} type{subagents.length === 1 ? "" : "s"} — spawn via the task tool</div>
+          {subagents.map((subagent) => (
+            <div key={subagent.name} className="rounded-lg border border-violet-200 p-2 dark:border-violet-800">
+              <div className="truncate text-sm font-medium">{subagent.name}</div>
+              <p className="muted text-xs">{subagent.description}</p>
+            </div>
+          ))}
         </section>
       )}
     </aside>

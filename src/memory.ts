@@ -3,6 +3,23 @@ import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messa
 const SESSION_STORE_FILE = process.env.SESSION_STORE_FILE || `${process.cwd()}/.sessions.json`;
 const MAX_MODEL_MESSAGES = Number(process.env.MAX_MODEL_MESSAGES || "100");
 
+export type SubagentStep =
+  | { type: "text"; text: string }
+  | { type: "tool"; name: string; args?: Record<string, unknown> }
+  | { type: "skill"; name: string };
+
+export interface SubagentRun {
+  id: string;
+  name: string;
+  description?: string;
+  prompt?: string;
+  tools: Record<string, unknown>[];
+  skills: string[];
+  steps?: SubagentStep[];
+  text?: string;
+  done?: boolean;
+}
+
 export interface ClientMessage {
   id: string;
   role: "user" | "assistant";
@@ -10,6 +27,7 @@ export interface ClientMessage {
   tools: string[];
   toolDetails?: Record<string, unknown>[];
   skills?: string[];
+  subagents?: SubagentRun[];
   completed?: boolean;
   error?: string;
   timeout?: boolean;
@@ -62,8 +80,23 @@ function normalizeClientMessage(message: ClientMessage): ClientMessage {
     ...message,
     tools: message.tools ?? [],
     skills: message.skills ?? [],
+    subagents: (message.subagents ?? []).map((run) => ({
+      ...run,
+      tools: run.tools ?? [],
+      skills: run.skills ?? [],
+      steps: run.steps ?? [],
+      done: run.done ?? true,
+    })),
     completed: message.completed ?? true,
   };
+}
+
+export function appendSubagentText(run: SubagentRun, text: string) {
+  run.text = (run.text ?? "") + text;
+  const steps = run.steps ?? (run.steps = []);
+  const last = steps.at(-1);
+  if (last?.type === "text") last.text += text;
+  else steps.push({ type: "text", text });
 }
 
 /**

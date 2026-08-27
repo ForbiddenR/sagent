@@ -7,6 +7,10 @@ demonstrates a few things in a minimal, readable way:
 - **Skills** — Claude Code–style. Each skill is a folder under `skills/` with a
   `SKILL.md`. The agent sees a one-line index of every skill and loads a skill's
   full instructions *on demand* via the `load_skill` tool (progressive disclosure).
+- **Subagents** — OpenCode / Claude Code / Codex-style. The parent calls `task`
+  to spawn a specialized worker (`general`, `explore`, or a custom
+  `agents/<name>/AGENT.md`) with a fresh context. Independent `task` calls in
+  one turn run in parallel; only the subagent's final answer returns to the parent.
 - **Memory** — conversation history per session id, **persisted to `.sessions.json`**
   so sessions survive server restarts.
 - **Agent loop** — a LangGraph `StateGraph` (`model` → `tools` → `model` …) with
@@ -14,8 +18,8 @@ demonstrates a few things in a minimal, readable way:
   the user when the API is unresponsive.
 - **Tools** — `calculator`, `current_time`, `read_file`, `write_file`, `run_bash`
   (with human-in-the-loop approval), `search_workspace` (semantic, RAG-backed),
-  `web_search_exa` / `web_fetch_exa` (Exa web search and page fetch), and
-  `load_skill`.
+  `web_search_exa` / `web_fetch_exa` (Exa web search and page fetch),
+  `load_skill`, and `task`.
 - **Workspace** — each session gets a private folder for files; upload, browse,
   and edit them from the UI.
 
@@ -70,6 +74,9 @@ Open http://localhost:3000.
   sessions. Each session has its own memory and enabled-skill set.
 - **Memory**: ask a follow-up like “what did I just ask?” → prior turns in the
   selected session are remembered.
+- **Subagents**: ask “use explore to search the web for LangGraph 1.x, then
+  summarize” → a `task` chip / subagent card appears; the parent only sees the
+  subagent’s final report, not its intermediate tool calls.
 - **Timeouts**: if the model stops responding, the request is aborted after
   `MODEL_TIMEOUT_MS` and a “⏱ Request timed out — check the API” notice appears.
 - Restart the server → sessions and history are restored from `.sessions.json`.
@@ -79,13 +86,14 @@ Open http://localhost:3000.
 ```
 src/
   index.ts           Bun.serve — routes: "/" (HTML), /api/chat, /api/sessions,
-                     /api/skills, /api/approvals, files & upload endpoints
+                     /api/skills, /api/subagents, /api/approvals, files & upload endpoints
   agent.ts           LangGraph StateGraph (model/tools nodes) + streaming + timeout
   memory.ts          SessionStore — sessions, enabled skills, messages (persisted)
   rag.ts             in-memory vector store backing search_workspace
   skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
   tools.ts           calculator, current_time, read_file, write_file, run_bash,
-                     search_workspace, web_search_exa, web_fetch_exa, load_skill
+                     search_workspace, web_search_exa, web_fetch_exa, load_skill, task
+  subagents.ts       load AGENT.md folders, built-in general / explore catalog
   exa.ts             hosted Exa MCP client for web_search_exa / web_fetch_exa
   frontend/
     index.html       HTML entry — imports app.tsx (Bun bundles it natively)
@@ -93,6 +101,9 @@ src/
 skills/
   calculator/SKILL.md
   poetry/SKILL.md
+agents/
+  general/AGENT.md
+  explore/AGENT.md
 ```
 
 ## Adding a skill
@@ -111,6 +122,29 @@ Detailed instructions the agent reads after calling load_skill("my-skill").
 ```
 
 Restart the server — it's picked up automatically.
+
+## Adding a subagent
+
+Create `agents/<name>/AGENT.md` with frontmatter and a system prompt:
+
+```markdown
+---
+name: reviewer
+description: Reviews code for bugs and missing tests. Use after a general subagent writes files.
+tools: read_file, search_workspace, calculator, current_time, load_skill
+---
+
+You are a code-review subagent.
+
+Read the files the parent names in the prompt. Report bugs, missing tests, and residual risks. Do not modify files.
+```
+
+`name` is the `subagent_type` the parent passes to `task`. `tools` is an optional
+comma-separated allowlist; omit it to inherit every parent tool except `task`
+(subagents cannot nest). Restart the server — it's picked up automatically.
+
+Built-in types (`general`, `explore`) also live in `agents/`; edit those files to
+override the defaults.
 
 ## Configuration
 

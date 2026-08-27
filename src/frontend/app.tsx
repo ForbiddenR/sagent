@@ -5,8 +5,16 @@ import { FileEditor } from "./components/FileEditor";
 import { Bubble, EmptyState } from "./components/Message";
 import { Sidebar } from "./components/Sidebar";
 import { SkillEditor } from "./components/SkillEditor";
-import type { AgentEvent, Message, SessionFile, SessionSummary, Skill, SkillEditorState, SkillSummary } from "./types";
+import type { AgentEvent, Message, SessionFile, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary } from "./types";
 import { blankSkill, getJson } from "./utils";
+
+function appendRunText(run: SubagentRun, text: string): SubagentRun {
+  const steps: SubagentStep[] = [...(run.steps ?? [])];
+  const last = steps.at(-1);
+  if (last?.type === "text") steps[steps.length - 1] = { type: "text", text: last.text + text };
+  else steps.push({ type: "text", text });
+  return { ...run, text: (run.text ?? "") + text, steps };
+}
 
 function useAgentPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -15,6 +23,7 @@ function useAgentPage() {
   const [files, setFiles] = useState<SessionFile[]>([]);
   const [fileEditor, setFileEditor] = useState<{ path: string; content: string } | null>(null);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [subagents, setSubagents] = useState<SubagentSummary[]>([]);
   const [skillEditor, setSkillEditor] = useState<SkillEditorState>(null);
   const [busy, setBusy] = useState(false);
 
@@ -187,7 +196,7 @@ function useAgentPage() {
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", text, tools: [], completed: true },
-      { id: assistantId, role: "assistant", text: "", tools: [], toolDetails: [], skills: [], completed: false },
+      { id: assistantId, role: "assistant", text: "", tools: [], toolDetails: [], skills: [], subagents: [], completed: false },
     ]);
     const patch = (fn: (m: Message) => Message) =>
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
@@ -217,8 +226,47 @@ function useAgentPage() {
           if (event.type === "token") patch((m) => ({ ...m, text: m.text + event.text }));
           else if (event.type === "tool") patch((m) => ({ ...m, tools: [...m.tools, event.name], toolDetails: [...(m.toolDetails ?? []), { name: event.name, args: event.args }] }));
           else if (event.type === "skill") patch((m) => ({ ...m, skills: [...(m.skills ?? []), event.name] }));
-          else if (event.type === "approval_request") patch((m) => ({ ...m, pendingApproval: { id: event.id, name: event.name, args: event.args } }));
-          else if (event.type === "approval_result") patch((m) => ({ ...m, pendingApproval: undefined }));
+          else if (event.type === "subagent_start") patch((m) => ({
+            ...m,
+            subagents: [...(m.subagents ?? []), {
+              id: event.id,
+              name: event.name,
+              description: event.description,
+              prompt: event.prompt,
+              tools: [],
+              skills: [],
+              steps: [],
+              done: false,
+            }],
+          }));
+          else if (event.type === "subagent_token") patch((m) => ({
+            ...m,
+            subagents: (m.subagents ?? []).map((s) => s.id === event.id ? appendRunText(s, event.text) : s),
+          }));
+          else if (event.type === "subagent_tool") patch((m) => ({
+            ...m,
+            subagents: (m.subagents ?? []).map((s) => s.id === event.id
+              ? { ...s, tools: [...s.tools, { name: event.name, args: event.args }], steps: [...(s.steps ?? []), { type: "tool" as const, name: event.name, args: event.args }] }
+              : s),
+          }));
+          else if (event.type === "subagent_skill") patch((m) => ({
+            ...m,
+            subagents: (m.subagents ?? []).map((s) => s.id === event.id
+              ? { ...s, skills: [...s.skills, event.name], steps: [...(s.steps ?? []), { type: "skill" as const, name: event.name }] }
+              : s),
+          }));
+          else if (event.type === "subagent_done") patch((m) => ({
+            ...m,
+            subagents: (m.subagents ?? []).map((s) => s.id === event.id ? { ...s, text: event.text || s.text, done: true } : s),
+          }));
+          else if (event.type === "approval_request") patch((m) => ({
+            ...m,
+            pendingApprovals: [...(m.pendingApprovals ?? []), { id: event.id, name: event.name, args: event.args }],
+          }));
+          else if (event.type === "approval_result") patch((m) => ({
+            ...m,
+            pendingApprovals: (m.pendingApprovals ?? []).filter((a) => a.id !== event.id),
+          }));
           else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
           else if (event.type === "timeout") patch((m) => ({ ...m, error: event.message, timeout: true, completed: true }));
           else if (event.type === "error") patch((m) => ({ ...m, error: event.message, completed: true }));
@@ -237,11 +285,13 @@ function useAgentPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ sessions }, { skills }] = await Promise.all([
+      const [{ sessions }, { skills }, { subagents }] = await Promise.all([
         getJson<{ sessions: SessionSummary[] }>("/api/sessions"),
         getJson<{ skills: SkillSummary[] }>("/api/skills"),
+        getJson<{ subagents: SubagentSummary[] }>("/api/subagents"),
       ]);
       setSkills(skills);
+      setSubagents(subagents);
       if (sessions.length === 0) await createSession();
       else {
         setSessions(sessions);
@@ -258,6 +308,7 @@ function useAgentPage() {
     files,
     fileEditor,
     skills,
+    subagents,
     skillEditor,
     busy,
     send,
@@ -296,6 +347,7 @@ function App() {
         activeSessionId={state.activeSessionId}
         files={state.files}
         skills={state.skills}
+        subagents={state.subagents}
         activeSkills={activeSkills}
         onLoadSession={state.loadSession}
         onCreateSession={state.createSession}

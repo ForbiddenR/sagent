@@ -4,6 +4,7 @@ import { Parser } from "expr-eval";
 import type { Skill } from "./skills.ts";
 import { ragStore } from "./rag.ts";
 import { webFetchExa, webSearchExa } from "./exa.ts";
+import { renderSubagentCatalog, type SubagentDef } from "./subagents.ts";
 
 const exprParser = new Parser();
 const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
@@ -140,11 +141,22 @@ const currentTime = tool(
   },
 );
 
+export interface BuildToolsOptions {
+  /** If set, only these tools are exposed (plus `task` when `subagents` is set). */
+  allowedTools?: string[];
+  /** When provided, expose the `task` tool so the parent can spawn subagents. */
+  subagents?: SubagentDef[];
+}
+
 /**
  * Build the tool set, including `load_skill` which closes over the loaded
  * skills so the model can pull a full SKILL.md body on demand.
  */
-export function buildTools(skills: Skill[], sessionId: string): StructuredToolInterface[] {
+export function buildTools(
+  skills: Skill[],
+  sessionId: string,
+  options: BuildToolsOptions = {},
+): StructuredToolInterface[] {
   const byName = new Map(skills.map((s) => [s.name, s]));
   const sessionWorkspace = `${WORKSPACE.replace(/\/+$/, "")}/${sessionId}`;
 
@@ -266,7 +278,7 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     },
   );
 
-  return [
+  const tools: StructuredToolInterface[] = [
     calculator,
     currentTime,
     readFile,
@@ -277,6 +289,43 @@ export function buildTools(skills: Skill[], sessionId: string): StructuredToolIn
     webFetch,
     loadSkill,
   ];
+
+  const allowed = options.allowedTools
+    ? new Set(options.allowedTools)
+    : undefined;
+  const filtered = allowed ? tools.filter((t) => allowed.has(t.name)) : tools;
+
+  if (options.subagents && options.subagents.length > 0) {
+    const catalog = renderSubagentCatalog(options.subagents);
+    filtered.push(
+      tool(
+        async () =>
+          "Error: task is executed by the agent runtime, not as a standalone tool.",
+        {
+          name: "task",
+          description:
+            "Delegate a focused subtask to a specialized subagent with its own fresh context. " +
+            "The subagent does not see this conversation — put every file path, constraint, and expected output in `prompt`. " +
+            "Call this multiple times in one turn to run independent subagents in parallel. " +
+            "Do not use it for work a single tool call can finish.\n\n" +
+            `Available subagent types:\n${catalog}`,
+          schema: z.object({
+            description: z
+              .string()
+              .describe("A short (3-5 word) description of the task"),
+            prompt: z
+              .string()
+              .describe("The complete task for the subagent to perform"),
+            subagent_type: z
+              .string()
+              .describe("Which specialized subagent to use, e.g. 'explore' or 'general'"),
+          }),
+        },
+      ),
+    );
+  }
+
+  return filtered;
 }
 
 export type AgentTool = StructuredToolInterface;

@@ -1,7 +1,8 @@
 import index from "./frontend/index.html";
 import { createAgent, hasAnthropicAuth, type Agent, type ApprovalRequest } from "./agent.ts";
 import { deleteSkill, loadSkills, saveSkill, type Skill, type SkillInput } from "./skills.ts";
-import { memory, type ClientMessage } from "./memory.ts";
+import { loadSubagents, type SubagentDef } from "./subagents.ts";
+import { appendSubagentText, memory, type ClientMessage } from "./memory.ts";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DEV = process.env.NODE_ENV !== "production";
@@ -15,6 +16,7 @@ if (!hasAnthropicAuth()) {
 
 let skills: Skill[] = [];
 let skillNames: string[] = [];
+let subagents: SubagentDef[] = [];
 let agent: Agent;
 
 interface PendingApproval {
@@ -38,8 +40,10 @@ function requestApproval(request: ApprovalRequest): Promise<boolean> {
 async function reloadSkills() {
   skills = await loadSkills();
   skillNames = skills.map((s) => s.name);
-  agent = createAgent(skills, requestApproval);
+  subagents = await loadSubagents();
+  agent = createAgent(skills, subagents, requestApproval);
   console.log(`Loaded ${skills.length} skill(s): ${skillNames.join(", ") || "(none)"}`);
+  console.log(`Loaded ${subagents.length} subagent(s): ${subagents.map((s) => s.name).join(", ") || "(none)"}`);
 }
 
 await reloadSkills();
@@ -234,6 +238,14 @@ const server = Bun.serve({
       },
     },
 
+    "/api/subagents": {
+      GET() {
+        return json({
+          subagents: subagents.map(({ name, description, tools }) => ({ name, description, tools })),
+        });
+      },
+    },
+
     "/api/skills": {
       GET() {
         return json({
@@ -294,11 +306,36 @@ const server = Bun.serve({
         memory.appendClientMessage(sessionId, userMessage);
 
         const stream = new ReadableStream({
-          async start(controller) {
+          start(controller) {
             const enc = new TextEncoder();
+            let closed = false;
             const heartbeat = setInterval(() => {
-              controller.enqueue(enc.encode(": keep-alive\n\n"));
+              enqueue(enc.encode(": keep-alive\n\n"));
             }, 5_000);
+
+            function enqueue(bytes: Uint8Array) {
+              if (closed) return false;
+              try {
+                controller.enqueue(bytes);
+                return true;
+              } catch {
+                closed = true;
+                clearInterval(heartbeat);
+                return false;
+              }
+            }
+
+            function closeStream() {
+              if (closed) return;
+              closed = true;
+              clearInterval(heartbeat);
+              try {
+                controller.close();
+              } catch {
+                // already closed by a client disconnect / refresh
+              }
+            }
+
             const assistantMessage: ClientMessage = {
               id: crypto.randomUUID(),
               role: "assistant",
@@ -306,18 +343,55 @@ const server = Bun.serve({
               tools: [],
               toolDetails: [],
               skills: [],
+              subagents: [],
               completed: false,
             };
             const send = (event: unknown) =>
-              controller.enqueue(enc.encode(`data: ${JSON.stringify(event)}\n\n`));
+              enqueue(enc.encode(`data: ${JSON.stringify(event)}\n\n`));
+
+            const run = (async () => {
             try {
               for await (const event of agent.run(sessionId, message)) {
+                if (closed || req.signal.aborted) break;
                 if (event.type === "token") assistantMessage.text += event.text;
                 else if (event.type === "tool") {
                   assistantMessage.tools.push(event.name);
                   assistantMessage.toolDetails?.push({ name: event.name, args: event.args });
                 }
                 else if (event.type === "skill") assistantMessage.skills?.push(event.name);
+                else if (event.type === "subagent_start") {
+                  assistantMessage.subagents?.push({
+                    id: event.id,
+                    name: event.name,
+                    description: event.description,
+                    prompt: event.prompt,
+                    tools: [],
+                    skills: [],
+                    steps: [],
+                    done: false,
+                  });
+                } else if (event.type === "subagent_token") {
+                  const run = assistantMessage.subagents?.find((s) => s.id === event.id);
+                  if (run) appendSubagentText(run, event.text);
+                } else if (event.type === "subagent_tool") {
+                  const run = assistantMessage.subagents?.find((s) => s.id === event.id);
+                  if (run) {
+                    run.tools.push({ name: event.name, args: event.args });
+                    (run.steps ?? (run.steps = [])).push({ type: "tool", name: event.name, args: event.args });
+                  }
+                } else if (event.type === "subagent_skill") {
+                  const run = assistantMessage.subagents?.find((s) => s.id === event.id);
+                  if (run) {
+                    run.skills.push(event.name);
+                    (run.steps ?? (run.steps = [])).push({ type: "skill", name: event.name });
+                  }
+                } else if (event.type === "subagent_done") {
+                  const run = assistantMessage.subagents?.find((s) => s.id === event.id);
+                  if (run) {
+                    run.text = event.text || run.text;
+                    run.done = true;
+                  }
+                }
                 else if (event.type === "done") {
                   assistantMessage.text = event.text || assistantMessage.text;
                   assistantMessage.completed = true;
@@ -329,14 +403,24 @@ const server = Bun.serve({
                 send(event);
               }
             } catch (err) {
-              const message = (err as Error).message;
-              assistantMessage.error = message;
-              send({ type: "error", message });
+              if (!closed && !req.signal.aborted) {
+                const message = (err as Error).message;
+                assistantMessage.error = message;
+                send({ type: "error", message });
+              }
             } finally {
-              clearInterval(heartbeat);
+              if (!assistantMessage.completed && !assistantMessage.error) {
+                assistantMessage.completed = true;
+              }
               memory.appendClientMessage(sessionId, assistantMessage);
-              controller.close();
+              closeStream();
             }
+            })();
+
+            req.signal.addEventListener("abort", () => closeStream(), { once: true });
+          },
+          cancel() {
+            // Client disconnected (refresh / navigation). Heartbeat is cleared in closeStream.
           },
         });
 

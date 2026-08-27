@@ -4,6 +4,23 @@ export interface PendingApproval {
   args?: Record<string, unknown>;
 }
 
+export type SubagentStep =
+  | { type: "text"; text: string }
+  | { type: "tool"; name: string; args?: Record<string, unknown> }
+  | { type: "skill"; name: string };
+
+export interface SubagentRun {
+  id: string;
+  name: string;
+  description?: string;
+  prompt?: string;
+  tools: Record<string, unknown>[];
+  skills: string[];
+  steps?: SubagentStep[];
+  text?: string;
+  done?: boolean;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -11,7 +28,8 @@ export interface Message {
   tools: string[];
   toolDetails?: Record<string, unknown>[];
   skills?: string[];
-  pendingApproval?: PendingApproval;
+  subagents?: SubagentRun[];
+  pendingApprovals?: PendingApproval[];
   completed?: boolean;
   error?: string;
   timeout?: boolean;
@@ -42,10 +60,21 @@ export interface Skill extends SkillSummary {
   body: string;
 }
 
+export interface SubagentSummary {
+  name: string;
+  description: string;
+  tools?: string[];
+}
+
 export type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
+  | { type: "subagent_start"; id: string; name: string; description?: string; prompt?: string }
+  | { type: "subagent_token"; id: string; text: string }
+  | { type: "subagent_tool"; id: string; name: string; args?: Record<string, unknown> }
+  | { type: "subagent_skill"; id: string; name: string }
+  | { type: "subagent_done"; id: string; name: string; text: string }
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
   | { type: "done"; text: string }

@@ -10,12 +10,15 @@ import {
   type MessageContent,
 } from "@langchain/core/messages";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
+import type { StructuredToolInterface } from "@langchain/core/tools";
 import { memory } from "./memory.ts";
 import { buildTools } from "./tools.ts";
 import { renderSkillIndex, type Skill } from "./skills.ts";
+import { renderSubagentCatalog, type SubagentDef } from "./subagents.ts";
 
 const MODEL = process.env.MODEL || "claude-opus-4-8";
 const MAX_TOOL_ROUNDS = 6;
+const MAX_SUBAGENT_ROUNDS = 8;
 const TOP_P = Number(process.env.TOP_P ?? "1");
 // Max ms to wait for the next chunk from the model before treating the request
 // as stalled/timed out. A long generation that keeps streaming is fine; only a
@@ -111,6 +114,11 @@ export type AgentEvent =
   | { type: "token"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
+  | { type: "subagent_start"; id: string; name: string; description?: string; prompt?: string }
+  | { type: "subagent_token"; id: string; text: string }
+  | { type: "subagent_tool"; id: string; name: string; args?: Record<string, unknown> }
+  | { type: "subagent_skill"; id: string; name: string }
+  | { type: "subagent_done"; id: string; name: string; text: string }
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
   | { type: "done"; text: string }
@@ -174,22 +182,56 @@ function extractText(content: MessageContent): string {
   return "";
 }
 
-function getToolCalls(message?: BaseMessage): ToolCallLike[] {
-  const calls = (message as { tool_calls?: ToolCallLike[] } | undefined)?.tool_calls;
-  return Array.isArray(calls) ? calls : [];
+function asArgs(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return { prompt: raw };
+    }
+  }
+  return {};
 }
 
-export function createAgent(allSkills: Skill[], requestApproval?: ApprovalRequestFn) {
+function getToolCalls(message?: BaseMessage): ToolCallLike[] {
+  const calls = (message as { tool_calls?: ToolCallLike[] } | undefined)?.tool_calls;
+  if (!Array.isArray(calls)) return [];
+  return calls.map((call) => ({
+    id: call.id,
+    name: call.name,
+    args: asArgs(call.args),
+  }));
+}
+
+interface LoopContext {
+  sessionId: string;
+  skills: Skill[];
+  tools: StructuredToolInterface[];
+  persistFinal: boolean;
+  events: EventQueue<AgentEvent>;
+  maxRounds: number;
+  subagent?: { id: string; name: string };
+}
+
+export function createAgent(
+  allSkills: Skill[],
+  allSubagents: SubagentDef[] = [],
+  requestApproval?: ApprovalRequestFn,
+) {
   const allSkillNames = allSkills.map((s) => s.name);
 
-  const llm = (skills: Skill[], sessionId: string) => {
+  const llm = (tools: StructuredToolInterface[]) => {
     const { apiKey, authToken } = anthropicAuth();
     if (!apiKey && !authToken) {
       throw new Error(
         "Neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set. Add one to .env (see .env.example).",
       );
     }
-    return new ChatAnthropic({
+    const chat = new ChatAnthropic({
       model: MODEL,
       maxTokens: 4096,
       topP: TOP_P,
@@ -208,10 +250,11 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       // Optional: point at an Anthropic-compatible third-party endpoint
       // (gateway/proxy). Left undefined → talks to the default Anthropic API.
       ...(process.env.ANTHROPIC_BASE_URL ? { anthropicApiUrl: process.env.ANTHROPIC_BASE_URL } : {}),
-    }).bindTools(buildTools(skills, sessionId));
+    });
+    return tools.length > 0 ? chat.bindTools(tools) : chat;
   };
 
-  function systemPrompt(skills: Skill[]) {
+  function parentSystemPrompt(skills: Skill[], subagents: SubagentDef[]) {
     return [
       "You are a helpful assistant with access to tools and a set of enabled skills.",
       "Use the `calculator` tool for any non-trivial arithmetic.",
@@ -220,6 +263,10 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       "Use `run_bash` to execute shell commands in your session workspace.",
       "Use `search_workspace` to search all workspace files by semantic meaning (better than read_file when you don't know the exact filename).",
       "Use `web_search_exa` to search the public web for current information. Follow up with `web_fetch_exa` to read full pages when search highlights are not enough.",
+      "Use the `task` tool to delegate independent subtasks to specialized subagents. Each subagent starts with a fresh context — put every file path, constraint, and expected output in `prompt`. Launch multiple `task` calls in one turn to run them in parallel. Do not spawn a subagent for work a single tool call can finish.",
+      "",
+      "Available subagents:",
+      renderSubagentCatalog(subagents),
       "",
       "Enabled skills (call `load_skill` with the skill name to read its full",
       "instructions BEFORE doing a task it covers):",
@@ -231,24 +278,126 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
     ].join("\n");
   }
 
-  /** Run one user turn, streaming events. Persists user + final answer to memory. */
-  async function* run(sessionId: string, userText: string): AsyncGenerator<AgentEvent> {
-    const activeSkillNames = new Set(memory.getActiveSkills(sessionId, allSkillNames));
-    const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
-    const tools = buildTools(activeSkills, sessionId);
-    const toolsByName = new Map(tools.map((t) => [t.name, t]));
-    const events = new EventQueue<AgentEvent>();
+  function subagentSystemPrompt(def: SubagentDef, skills: Skill[]) {
+    return [
+      def.prompt,
+      "",
+      "You are a subagent. Complete the assigned task and return a concise final answer.",
+      "Do not ask the user questions. You cannot spawn further subagents.",
+      "",
+      "Enabled skills (call `load_skill` with the skill name to read its full",
+      "instructions BEFORE doing a task it covers):",
+      renderSkillIndex(skills),
+    ].join("\n");
+  }
 
-    memory.append(sessionId, new HumanMessage(userText));
+  function emitTool(ctx: LoopContext, name: string, args?: Record<string, unknown>) {
+    if (ctx.subagent) {
+      if (name === "load_skill") {
+        const skillName = typeof args?.name === "string" ? args.name : "unknown";
+        ctx.events.push({ type: "subagent_skill", id: ctx.subagent.id, name: skillName });
+      } else {
+        ctx.events.push({ type: "subagent_tool", id: ctx.subagent.id, name, args });
+      }
+      return;
+    }
+    if (name === "load_skill") {
+      const skillName = typeof args?.name === "string" ? args.name : "unknown";
+      ctx.events.push({ type: "skill", name: skillName });
+    } else {
+      ctx.events.push({ type: "tool", name, args });
+    }
+  }
 
-    // Working transcript for this turn: system + persisted history.
-    // Intermediate tool_use / tool_result messages stay local (not persisted),
-    // keeping stored memory to clean user/assistant text pairs.
-    const initialMessages: BaseMessage[] = [
-      new SystemMessage(systemPrompt(activeSkills)),
-      ...memory.getHistory(sessionId),
-    ];
+  async function invokeTool(
+    ctx: LoopContext,
+    call: ToolCallLike,
+  ): Promise<string> {
+    const args = call.args ?? {};
+    if (call.name === "task") {
+      emitTool(ctx, call.name, args);
+      return runTask(ctx, args);
+    }
 
+    emitTool(ctx, call.name, args);
+
+    const selected = ctx.tools.find((t) => t.name === call.name);
+    if (!selected) return `Error: unknown or disabled tool "${call.name}"`;
+
+    if (call.name === "run_bash" && requestApproval) {
+      const approvalId = crypto.randomUUID();
+      ctx.events.push({ type: "approval_request", id: approvalId, name: "run_bash", args });
+      const approved = await requestApproval({
+        id: approvalId,
+        sessionId: ctx.sessionId,
+        name: "run_bash",
+        args,
+      });
+      ctx.events.push({ type: "approval_result", id: approvalId, approved });
+      return approved
+        ? String(await selected.invoke(args))
+        : "Denied: user declined to run this command.";
+    }
+
+    return String(await selected.invoke(args));
+  }
+
+  async function runTask(parent: LoopContext, args: Record<string, unknown>): Promise<string> {
+    if (parent.subagent) {
+      return "Error: nested subagents are not allowed. Complete the task yourself.";
+    }
+
+    const parsed = asArgs(args);
+    const prompt = typeof parsed.prompt === "string" ? parsed.prompt.trim() : "";
+    const type = typeof parsed.subagent_type === "string" ? parsed.subagent_type.trim() : "";
+    const description = typeof parsed.description === "string" ? parsed.description.trim() : type;
+    if (!prompt) return "Error: prompt is required.";
+    if (!type) return "Error: subagent_type is required.";
+
+    const def = allSubagents.find((s) => s.name === type);
+    if (!def) {
+      const available = allSubagents.map((s) => s.name).join(", ") || "(none)";
+      return `Error: unknown subagent_type "${type}". Available: ${available}.`;
+    }
+
+    const id = crypto.randomUUID();
+    parent.events.push({ type: "subagent_start", id, name: def.name, description, prompt });
+
+    const childTools = buildTools(parent.skills, parent.sessionId, {
+      allowedTools: def.tools,
+    });
+    const child: LoopContext = {
+      sessionId: parent.sessionId,
+      skills: parent.skills,
+      tools: childTools,
+      persistFinal: false,
+      events: parent.events,
+      maxRounds: MAX_SUBAGENT_ROUNDS,
+      subagent: { id, name: def.name },
+    };
+
+    try {
+      const result = await runLoop(child, [
+        new SystemMessage(subagentSystemPrompt(def, parent.skills)),
+        new HumanMessage(prompt),
+      ]);
+      const text = result.finalText || "(subagent produced no output)";
+      parent.events.push({ type: "subagent_done", id, name: def.name, text });
+      return text;
+    } catch (err) {
+      const message = isTimeoutLikeError(err)
+        ? TIMEOUT_HINT
+        : (err as Error).message;
+      const text = `Error: ${message}`;
+      parent.events.push({ type: "subagent_done", id, name: def.name, text });
+      return text;
+    }
+  }
+
+  async function runLoop(
+    ctx: LoopContext,
+    initialMessages: BaseMessage[],
+  ): Promise<{ finalText: string; done: boolean }> {
     const StateAnnotation = Annotation.Root({
       messages: Annotation<BaseMessage[], BaseMessage | BaseMessage[]>({
         reducer: (left, right) => left.concat(Array.isArray(right) ? right : [right]),
@@ -259,11 +408,9 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       rounds: Annotation<number>(),
     });
 
-    const model = llm(activeSkills, sessionId);
+    const model = llm(ctx.tools);
 
     async function callModel(state: typeof StateAnnotation.State) {
-      // Abort the underlying fetch if the model stalls, so we don't hang on an
-      // unreachable / wedged API endpoint and leave the UI spinning forever.
       const controller = new AbortController();
       const stream = model.stream(state.messages, { signal: controller.signal });
 
@@ -275,19 +422,22 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       )) {
         gathered = gathered === undefined ? chunk : gathered.concat(chunk);
         const text = extractText(chunk.content);
-        if (text) events.push({ type: "token", text });
+        if (text) {
+          if (ctx.subagent) ctx.events.push({ type: "subagent_token", id: ctx.subagent.id, text });
+          else ctx.events.push({ type: "token", text });
+        }
       }
 
       if (!gathered) {
-        events.push({ type: "done", text: "" });
+        if (!ctx.subagent) ctx.events.push({ type: "done", text: "" });
         return { done: true, finalText: "", rounds: state.rounds + 1 };
       }
 
       const toolCalls = gathered.tool_calls ?? [];
       if (toolCalls.length === 0) {
         const finalText = extractText(gathered.content);
-        memory.append(sessionId, new AIMessage(finalText));
-        events.push({ type: "done", text: finalText });
+        if (ctx.persistFinal) memory.append(ctx.sessionId, new AIMessage(finalText));
+        if (!ctx.subagent) ctx.events.push({ type: "done", text: finalText });
         return { messages: gathered, done: true, finalText, rounds: state.rounds + 1 };
       }
 
@@ -295,41 +445,36 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
     }
 
     async function callTools(state: typeof StateAnnotation.State) {
-      const toolMessages: ToolMessage[] = [];
       const toolCalls = getToolCalls(state.messages.at(-1));
+      const results: string[] = new Array(toolCalls.length);
+      const taskIndexes: number[] = [];
 
-      for (const call of toolCalls) {
-        const args = call.args;
-        if (call.name === "load_skill") {
-          const skillName = typeof args?.name === "string" ? args.name : "unknown";
-          events.push({ type: "skill", name: skillName });
-        } else {
-          events.push({ type: "tool", name: call.name, args });
-        }
-
-        const selected = toolsByName.get(call.name);
-        let result: string;
-        if (!selected) {
-          result = `Error: unknown or disabled tool "${call.name}"`;
-        } else if (call.name === "run_bash" && requestApproval) {
-          const approvalId = crypto.randomUUID();
-          events.push({ type: "approval_request", id: approvalId, name: "run_bash", args });
-          const approved = await requestApproval({ id: approvalId, sessionId, name: "run_bash", args });
-          events.push({ type: "approval_result", id: approvalId, approved });
-          result = approved
-            ? String(await selected.invoke(args))
-            : "Denied: user declined to run this command.";
-        } else {
-          result = String(await selected.invoke(args));
-        }
-        toolMessages.push(new ToolMessage({ content: result, tool_call_id: call.id ?? call.name }));
+      for (let i = 0; i < toolCalls.length; i++) {
+        if (toolCalls[i]!.name === "task") taskIndexes.push(i);
+        else results[i] = await invokeTool(ctx, toolCalls[i]!);
       }
 
-      return { messages: toolMessages };
+      if (taskIndexes.length > 0) {
+        await Promise.all(
+          taskIndexes.map(async (i) => {
+            results[i] = await invokeTool(ctx, toolCalls[i]!);
+          }),
+        );
+      }
+
+      return {
+        messages: toolCalls.map(
+          (call, i) =>
+            new ToolMessage({
+              content: results[i] ?? "",
+              tool_call_id: call.id ?? call.name,
+            }),
+        ),
+      };
     }
 
     function routeAfterModel(state: typeof StateAnnotation.State) {
-      if (state.done || state.rounds >= MAX_TOOL_ROUNDS) return END;
+      if (state.done || state.rounds >= ctx.maxRounds) return END;
       return getToolCalls(state.messages.at(-1)).length > 0 ? "tools" : END;
     }
 
@@ -341,15 +486,43 @@ export function createAgent(allSkills: Skill[], requestApproval?: ApprovalReques
       .addEdge("tools", "model")
       .compile();
 
+    const result = await graph.invoke({
+      messages: initialMessages,
+      finalText: "",
+      done: false,
+      rounds: 0,
+    });
+    return { finalText: result.finalText ?? "", done: Boolean(result.done) };
+  }
+
+  /** Run one user turn, streaming events. Persists user + final answer to memory. */
+  async function* run(sessionId: string, userText: string): AsyncGenerator<AgentEvent> {
+    const activeSkillNames = new Set(memory.getActiveSkills(sessionId, allSkillNames));
+    const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
+    const tools = buildTools(activeSkills, sessionId, { subagents: allSubagents });
+    const events = new EventQueue<AgentEvent>();
+
+    memory.append(sessionId, new HumanMessage(userText));
+
+    const initialMessages: BaseMessage[] = [
+      new SystemMessage(parentSystemPrompt(activeSkills, allSubagents)),
+      ...memory.getHistory(sessionId),
+    ];
+
     const graphTask = (async () => {
       try {
-        const result = await graph.invoke({
-          messages: initialMessages,
-          finalText: "",
-          done: false,
-          rounds: 0,
-        });
-        if (!result.done) events.push({ type: "done", text: "" });
+        const result = await runLoop(
+          {
+            sessionId,
+            skills: activeSkills,
+            tools,
+            persistFinal: true,
+            events,
+            maxRounds: MAX_TOOL_ROUNDS,
+          },
+          initialMessages,
+        );
+        if (!result.done) events.push({ type: "done", text: result.finalText });
       } catch (err) {
         if (isTimeoutLikeError(err)) {
           events.push({ type: "timeout", message: TIMEOUT_HINT });

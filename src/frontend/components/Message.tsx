@@ -1,4 +1,5 @@
-import type { Message, PendingApproval } from "../types";
+import { useEffect, useRef, useState } from "react";
+import type { Message, PendingApproval, SubagentRun, SubagentStep } from "../types";
 import { MarkdownMessage } from "./Markdown";
 
 function formatToolArgs(args?: Record<string, unknown>): string {
@@ -34,6 +35,74 @@ function SkillChip({ name }: { name: string }) {
     <div className="flex w-full items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
       <span className="text-[10px]">📘</span>
       {name}
+    </div>
+  );
+}
+
+function fallbackSteps(run: SubagentRun): SubagentStep[] {
+  if ((run.steps ?? []).length > 0) return run.steps!;
+  const steps: SubagentStep[] = [];
+  for (const name of run.skills) steps.push({ type: "skill", name });
+  for (const detail of run.tools) {
+    steps.push({ type: "tool", name: String(detail.name ?? "tool"), args: detail.args as Record<string, unknown> | undefined });
+  }
+  if (run.text) steps.push({ type: "text", text: run.text });
+  return steps;
+}
+
+function SubagentCard({ run }: { run: SubagentRun }) {
+  const [open, setOpen] = useState(false);
+  const logRef = useRef<HTMLDivElement>(null);
+  const steps = fallbackSteps(run);
+  const toolCount = run.tools.length + run.skills.length;
+
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [open, steps, run.text, run.done]);
+
+  return (
+    <div className="flex w-full flex-col gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-2.5 py-2 text-xs text-violet-900 dark:border-violet-700 dark:bg-violet-900/30 dark:text-violet-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 text-left font-medium"
+      >
+        <span className="w-3 shrink-0 text-[10px] text-violet-500">{open ? "▼" : "▶"}</span>
+        <span className="text-[10px]">🤖</span>
+        <span>{run.name}</span>
+        {run.description && (
+          <span className="truncate font-normal text-violet-700 dark:text-violet-300">· {run.description}</span>
+        )}
+        <span className={`ml-auto shrink-0 text-[10px] uppercase tracking-wide ${run.done ? "" : "animate-pulse"}`}>
+          {run.done ? "done" : "running"}
+          {toolCount > 0 ? ` · ${toolCount}` : ""}
+        </span>
+      </button>
+      {open && (
+        <>
+          {run.prompt && (
+            <div className="whitespace-pre-wrap rounded bg-black/5 px-2 py-1 text-[11px] leading-relaxed text-violet-800 dark:bg-white/10 dark:text-violet-200">
+              <span className="font-medium">task </span>
+              {run.prompt}
+            </div>
+          )}
+          <div ref={logRef} className="flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+            {steps.map((step, i) => {
+              if (step.type === "skill") return <SkillChip key={`step-${i}`} name={step.name} />;
+              if (step.type === "tool") return <ToolChip key={`step-${i}`} name={step.name} args={step.args} />;
+              return (
+                <div key={`step-${i}`} className="whitespace-pre-wrap rounded bg-black/5 px-2 py-1 text-[11px] leading-relaxed dark:bg-white/10">
+                  {step.text}
+                </div>
+              );
+            })}
+            {!run.done && steps.length === 0 && (
+              <div className="muted animate-pulse px-1 text-[11px]">thinking...</div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -75,16 +144,19 @@ export function Bubble({ message, onApprove }: BubbleProps) {
   }
   return (
     <div className="flex flex-col items-start gap-2">
-      {((message.skills ?? []).length > 0 || (message.toolDetails ?? []).length > 0) && (
+      {((message.skills ?? []).length > 0 || (message.toolDetails ?? []).length > 0 || (message.subagents ?? []).length > 0) && (
         <div className="flex max-w-[85%] flex-col gap-1.5">
           {(message.skills ?? []).map((name, i) => <SkillChip key={`skill-${i}`} name={name} />)}
           {(message.toolDetails ?? []).map((detail, i) => <ToolChip key={`tool-${i}`} name={detail.name as string} args={detail.args as Record<string, unknown>} />)}
+          {(message.subagents ?? []).map((run) => <SubagentCard key={run.id} run={run} />)}
         </div>
       )}
-      {message.pendingApproval && <ApprovalCard approval={message.pendingApproval} onApprove={onApprove} />}
-      {message.text && (
+      {(message.pendingApprovals ?? []).map((approval) => (
+        <ApprovalCard key={approval.id} approval={approval} onApprove={onApprove} />
+      ))}
+      {(message.text || (!message.completed && (message.subagents ?? []).length === 0)) && (
         <div className="bubble-assistant max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
-          <MarkdownMessage text={message.text} />
+          {message.text && <MarkdownMessage text={message.text} />}
           {message.completed && !message.error && !message.timeout && <div className="muted mt-2 text-xs">response completed ✓</div>}
           {!message.completed && !message.error && !message.timeout && <div className="muted mt-2 text-xs animate-pulse">thinking...</div>}
         </div>
@@ -104,7 +176,7 @@ export function EmptyState() {
   return (
     <div className="muted flex h-full flex-col items-center justify-center gap-2 text-center">
       <p className="text-sm">Ask me anything.</p>
-      <p className="text-xs">Try "what is 1234 × 9?" or "write me a haiku about the sea".</p>
+      <p className="text-xs">Try "what is 1234 × 9?", "write me a haiku about the sea", or "use explore to search the web for LangGraph 1.x".</p>
     </div>
   );
 }
