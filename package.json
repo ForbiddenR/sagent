@@ -10,13 +10,13 @@
     "build": "bun build ./src/index.ts --compile --target=bun-linux-x64 --outfile dist/agent-linux-x64"
   },
   "dependencies": {
-    "@langchain/anthropic": "^0.3.0",
+    "@langchain/anthropic": "^1.5.8",
     "@langchain/community": "^1.1.29",
-    "@langchain/core": "^0.3.0",
-    "@langchain/langgraph": "0.4.3",
+    "@langchain/core": "^1.2.9",
+    "@langchain/langgraph": "^1.4.13",
     "@langchain/textsplitters": "^1.0.1",
     "expr-eval": "^2.0.2",
-    "langchain": "^1.4.4",
+    "langchain": "^1.5.10",
     "react": "^19",
     "react-dom": "^19",
     "zod": "^3.23.8"
