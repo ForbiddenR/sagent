@@ -35,6 +35,8 @@ export interface Message {
   timeout?: boolean;
 }
 
+export type SessionMode = "build" | "plan";
+
 export interface SessionSummary {
   id: string;
   title: string;
@@ -42,6 +44,7 @@ export interface SessionSummary {
   updatedAt: string;
   messageCount: number;
   activeSkills: string[];
+  mode: SessionMode;
 }
 
 export interface SessionFile {

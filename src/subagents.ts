@@ -1,3 +1,5 @@
+import type { SessionMode } from "./memory.ts";
+
 export interface SubagentDef {
   /** Slug used as `subagent_type` on the `task` tool. */
   name: string;
@@ -10,6 +12,29 @@ export interface SubagentDef {
    * tool except `task` — subagents cannot spawn nested subagents by default.
    */
   tools?: string[];
+}
+
+export const WRITE_TOOLS = ["write_file", "run_bash"] as const;
+
+/** Parent tools in plan mode — reads, search, and `task` (added separately). */
+export const PLAN_PARENT_TOOLS = [
+  "calculator",
+  "current_time",
+  "read_file",
+  "search_workspace",
+  "web_search_exa",
+  "web_fetch_exa",
+  "load_skill",
+];
+
+export function isReadOnlySubagent(def: SubagentDef): boolean {
+  if (!def.tools || def.tools.length === 0) return false;
+  return !def.tools.some((name) => (WRITE_TOOLS as readonly string[]).includes(name));
+}
+
+export function subagentsForMode(subagents: SubagentDef[], mode: SessionMode): SubagentDef[] {
+  if (mode !== "plan") return subagents;
+  return subagents.filter(isReadOnlySubagent);
 }
 
 /** Parse a tiny `--- key: value --- body` frontmatter block. */

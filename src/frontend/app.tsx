@@ -5,7 +5,7 @@ import { FileEditor } from "./components/FileEditor";
 import { Bubble, EmptyState } from "./components/Message";
 import { Sidebar } from "./components/Sidebar";
 import { SkillEditor } from "./components/SkillEditor";
-import type { AgentEvent, Message, SessionFile, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary } from "./types";
+import type { AgentEvent, Message, SessionFile, SessionMode, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary } from "./types";
 import { blankSkill, getJson } from "./utils";
 
 function appendRunText(run: SubagentRun, text: string): SubagentRun {
@@ -95,6 +95,19 @@ function useAgentPage() {
       method: "POST",
     });
     setMessages([]);
+    setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? data.session : s)));
+  }
+
+  async function setMode(mode: SessionMode) {
+    if (!activeSessionId) return;
+    const data = await getJson<{ session: SessionSummary; mode: SessionMode }>(
+      `/api/sessions/${activeSessionId}/mode`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode }),
+      },
+    );
     setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? data.session : s)));
   }
 
@@ -316,6 +329,7 @@ function useAgentPage() {
     createSession,
     deleteSession,
     resetSession,
+    setMode,
     toggleSkill,
     openEditSkill,
     openCreateSkill,
@@ -365,7 +379,9 @@ function App() {
               <div className="btn-primary flex h-8 w-8 items-center justify-center rounded-xl2 text-sm font-bold">A</div>
               <div>
                 <h1 className="text-sm font-semibold leading-tight">{state.activeSession?.title ?? "Agent"}</h1>
-                <p className="muted text-xs leading-tight">Bun · LangGraph · {state.activeSession?.activeSkills.length ?? 0} skills enabled</p>
+                <p className="muted text-xs leading-tight">
+                  Bun · LangGraph · {(state.activeSession?.mode ?? "build") === "plan" ? "plan mode" : "build mode"} · {state.activeSession?.activeSkills.length ?? 0} skills enabled
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -379,7 +395,12 @@ function App() {
           </main>
 
           <footer className="sticky bottom-0 pb-5 pt-2" style={{ background: "var(--bg)" }}>
-            <Composer busy={state.busy} onSend={state.send} />
+            <Composer
+              busy={state.busy}
+              mode={state.activeSession?.mode ?? "build"}
+              onModeChange={state.setMode}
+              onSend={state.send}
+            />
           </footer>
         </div>
       </div>

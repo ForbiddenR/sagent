@@ -71,9 +71,6 @@ function SubagentCard({ run }: { run: SubagentRun }) {
         <span className="w-3 shrink-0 text-[10px] text-violet-500">{open ? "▼" : "▶"}</span>
         <span className="text-[10px]">🤖</span>
         <span>{run.name}</span>
-        {run.description && (
-          <span className="truncate font-normal text-violet-700 dark:text-violet-300">· {run.description}</span>
-        )}
         <span className={`ml-auto shrink-0 text-[10px] uppercase tracking-wide ${run.done ? "" : "animate-pulse"}`}>
           {run.done ? "done" : "running"}
           {toolCount > 0 ? ` · ${toolCount}` : ""}
@@ -176,7 +173,7 @@ export function EmptyState() {
   return (
     <div className="muted flex h-full flex-col items-center justify-center gap-2 text-center">
       <p className="text-sm">Ask me anything.</p>
-      <p className="text-xs">Try "what is 1234 × 9?", "write me a haiku about the sea", or "use explore to search the web for LangGraph 1.x".</p>
+      <p className="text-xs">Try "what is 1234 × 9?", "write me a haiku about the sea", "use explore to search the web for LangGraph 1.x", or switch to Plan and ask "plan how to add a notes file".</p>
     </div>
   );
 }

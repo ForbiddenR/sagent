@@ -141,6 +141,23 @@ const server = Bun.serve({
       },
     },
 
+    "/api/sessions/:id/mode": {
+      GET(req) {
+        const id = requireSession(req.params.id);
+        return json({ mode: id ? memory.getMode(id) : "build" });
+      },
+      async POST(req) {
+        const id = requireSession(req.params.id);
+        const body = (await req.json().catch(() => ({}))) as { mode?: string };
+        if (!id) return json({ error: "session not found" }, 404);
+        if (body.mode !== "plan" && body.mode !== "build") {
+          return json({ error: "mode must be 'plan' or 'build'" }, 400);
+        }
+        const session = memory.setMode(id, body.mode);
+        return json({ session, mode: session.mode });
+      },
+    },
+
     "/api/sessions/:id/skills": {
       GET(req) {
         const id = requireSession(req.params.id);

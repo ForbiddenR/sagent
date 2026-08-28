@@ -11,10 +11,16 @@ import {
 } from "@langchain/core/messages";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { memory } from "./memory.ts";
+import { memory, type SessionMode } from "./memory.ts";
 import { buildTools } from "./tools.ts";
 import { renderSkillIndex, type Skill } from "./skills.ts";
-import { renderSubagentCatalog, type SubagentDef } from "./subagents.ts";
+import {
+  PLAN_PARENT_TOOLS,
+  isReadOnlySubagent,
+  renderSubagentCatalog,
+  subagentsForMode,
+  type SubagentDef,
+} from "./subagents.ts";
 
 const MODEL = process.env.MODEL || "claude-opus-4-8";
 const MAX_TOOL_ROUNDS = 6;
@@ -214,6 +220,7 @@ interface LoopContext {
   persistFinal: boolean;
   events: EventQueue<AgentEvent>;
   maxRounds: number;
+  mode: SessionMode;
   subagent?: { id: string; name: string };
 }
 
@@ -254,16 +261,34 @@ export function createAgent(
     return tools.length > 0 ? chat.bindTools(tools) : chat;
   };
 
-  function parentSystemPrompt(skills: Skill[], subagents: SubagentDef[]) {
-    return [
-      "You are a helpful assistant with access to tools and a set of enabled skills.",
+  function parentSystemPrompt(skills: Skill[], subagents: SubagentDef[], mode: SessionMode) {
+    const common = [
       "Use the `calculator` tool for any non-trivial arithmetic.",
       "Use `current_time` when the user asks about the date or time.",
-      "Use `read_file` and `write_file` to read/write files in your private session workspace.",
-      "Use `run_bash` to execute shell commands in your session workspace.",
+      "Use `read_file` to read files in your private session workspace.",
       "Use `search_workspace` to search all workspace files by semantic meaning (better than read_file when you don't know the exact filename).",
       "Use `web_search_exa` to search the public web for current information. Follow up with `web_fetch_exa` to read full pages when search highlights are not enough.",
       "Use the `task` tool to delegate independent subtasks to specialized subagents. Each subagent starts with a fresh context — put every file path, constraint, and expected output in `prompt`. Launch multiple `task` calls in one turn to run them in parallel. Do not spawn a subagent for work a single tool call can finish.",
+    ];
+
+    const modeLines =
+      mode === "plan"
+        ? [
+            "You are in PLAN MODE. Analyze and propose a plan. Do not implement it.",
+            "You cannot write files or run shell commands. `write_file` and `run_bash` are disabled.",
+            "If you need extra research, spawn the `explore` subagent (read-only). Do not spawn write-capable subagents.",
+            "Return a numbered plan with: goal, steps, files or commands involved, risks, and what to do after the user switches to Build.",
+            "Wait for the user to accept the plan (they will switch the session to Build). Do not claim you have already made changes.",
+          ]
+        : [
+            "You are a helpful assistant with access to tools and a set of enabled skills.",
+            "Use `write_file` to write files in your private session workspace.",
+            "Use `run_bash` to execute shell commands in your session workspace.",
+          ];
+
+    return [
+      ...modeLines,
+      ...common,
       "",
       "Available subagents:",
       renderSubagentCatalog(subagents),
@@ -304,7 +329,7 @@ export function createAgent(
     if (name === "load_skill") {
       const skillName = typeof args?.name === "string" ? args.name : "unknown";
       ctx.events.push({ type: "skill", name: skillName });
-    } else {
+    } else if (name !== "task") {
       ctx.events.push({ type: "tool", name, args });
     }
   }
@@ -315,7 +340,6 @@ export function createAgent(
   ): Promise<string> {
     const args = call.args ?? {};
     if (call.name === "task") {
-      emitTool(ctx, call.name, args);
       return runTask(ctx, args);
     }
 
@@ -354,10 +378,17 @@ export function createAgent(
     if (!prompt) return "Error: prompt is required.";
     if (!type) return "Error: subagent_type is required.";
 
-    const def = allSubagents.find((s) => s.name === type);
+    const allowed = subagentsForMode(allSubagents, parent.mode);
+    const def = allowed.find((s) => s.name === type);
     if (!def) {
-      const available = allSubagents.map((s) => s.name).join(", ") || "(none)";
+      const available = allowed.map((s) => s.name).join(", ") || "(none)";
+      if (parent.mode === "plan") {
+        return `Error: subagent_type "${type}" is not allowed in plan mode (write-capable workers are blocked). Available: ${available}.`;
+      }
       return `Error: unknown subagent_type "${type}". Available: ${available}.`;
+    }
+    if (parent.mode === "plan" && !isReadOnlySubagent(def)) {
+      return `Error: subagent "${type}" can write files. In plan mode only read-only subagents are allowed.`;
     }
 
     const id = crypto.randomUUID();
@@ -373,6 +404,7 @@ export function createAgent(
       persistFinal: false,
       events: parent.events,
       maxRounds: MAX_SUBAGENT_ROUNDS,
+      mode: parent.mode,
       subagent: { id, name: def.name },
     };
 
@@ -499,13 +531,18 @@ export function createAgent(
   async function* run(sessionId: string, userText: string): AsyncGenerator<AgentEvent> {
     const activeSkillNames = new Set(memory.getActiveSkills(sessionId, allSkillNames));
     const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
-    const tools = buildTools(activeSkills, sessionId, { subagents: allSubagents });
+    const mode = memory.getMode(sessionId);
+    const parentSubagents = subagentsForMode(allSubagents, mode);
+    const tools = buildTools(activeSkills, sessionId, {
+      allowedTools: mode === "plan" ? PLAN_PARENT_TOOLS : undefined,
+      subagents: parentSubagents,
+    });
     const events = new EventQueue<AgentEvent>();
 
     memory.append(sessionId, new HumanMessage(userText));
 
     const initialMessages: BaseMessage[] = [
-      new SystemMessage(parentSystemPrompt(activeSkills, allSubagents)),
+      new SystemMessage(parentSystemPrompt(activeSkills, parentSubagents, mode)),
       ...memory.getHistory(sessionId),
     ];
 
@@ -518,6 +555,7 @@ export function createAgent(
             tools,
             persistFinal: true,
             events,
+            mode,
             maxRounds: MAX_TOOL_ROUNDS,
           },
           initialMessages,

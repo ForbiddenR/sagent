@@ -33,6 +33,8 @@ export interface ClientMessage {
   timeout?: boolean;
 }
 
+export type SessionMode = "build" | "plan";
+
 export interface SessionSummary {
   id: string;
   title: string;
@@ -40,6 +42,11 @@ export interface SessionSummary {
   updatedAt: string;
   messageCount: number;
   activeSkills: string[];
+  mode: SessionMode;
+}
+
+function normalizeMode(mode: unknown): SessionMode {
+  return mode === "plan" ? "plan" : "build";
 }
 
 interface SessionRecord {
@@ -50,6 +57,7 @@ interface SessionRecord {
   history: BaseMessage[];
   clientMessages: ClientMessage[];
   activeSkills: Set<string>;
+  mode: SessionMode;
 }
 
 interface PersistedSessionRecord {
@@ -59,6 +67,7 @@ interface PersistedSessionRecord {
   updatedAt: string;
   clientMessages: ClientMessage[];
   activeSkills: string[];
+  mode?: SessionMode;
 }
 
 interface PersistedSessionStore {
@@ -132,6 +141,7 @@ class SessionStore {
       history: [],
       clientMessages: [],
       activeSkills: new Set(allSkillNames),
+      mode: "build",
     };
     this.sessions.set(id, record);
     this.persistSoon();
@@ -150,6 +160,7 @@ class SessionStore {
         history: [],
         clientMessages: [],
         activeSkills: new Set(allSkillNames),
+        mode: "build",
       };
       this.sessions.set(sessionId, record);
       this.persistSoon();
@@ -227,6 +238,18 @@ class SessionStore {
     return this.toSummary(record);
   }
 
+  getMode(sessionId: string): SessionMode {
+    return this.ensureSession(sessionId).mode;
+  }
+
+  setMode(sessionId: string, mode: SessionMode): SessionSummary {
+    const record = this.ensureSession(sessionId);
+    record.mode = normalizeMode(mode);
+    record.updatedAt = new Date().toISOString();
+    this.persistSoon();
+    return this.toSummary(record);
+  }
+
   enableSkillForAll(skillName: string): void {
     for (const record of this.sessions.values()) {
       record.activeSkills.add(skillName);
@@ -264,6 +287,7 @@ class SessionStore {
           history,
           clientMessages,
           activeSkills: new Set(session.activeSkills ?? []),
+          mode: normalizeMode(session.mode),
         });
       }
     } catch (err) {
@@ -286,6 +310,7 @@ class SessionStore {
         updatedAt: record.updatedAt,
         clientMessages: record.clientMessages,
         activeSkills: [...record.activeSkills].sort(),
+        mode: record.mode,
       })),
     };
 
@@ -300,6 +325,7 @@ class SessionStore {
       updatedAt: record.updatedAt,
       messageCount: record.clientMessages.length,
       activeSkills: [...record.activeSkills].sort(),
+      mode: record.mode,
     };
   }
 }

@@ -11,6 +11,10 @@ demonstrates a few things in a minimal, readable way:
   to spawn a specialized worker (`general`, `explore`, or a custom
   `agents/<name>/AGENT.md`) with a fresh context. Independent `task` calls in
   one turn run in parallel; only the subagent's final answer returns to the parent.
+- **Plan mode** — OpenCode-style primary mode. Toggle Plan / Build on the session.
+  Plan is read-only (`write_file` and `run_bash` off; `task` may only spawn
+  read-only workers like `explore`). Switch to Build to implement the plan. The
+  conversation stays in the same session.
 - **Memory** — conversation history per session id, **persisted to `.sessions.json`**
   so sessions survive server restarts.
 - **Agent loop** — a LangGraph `StateGraph` (`model` → `tools` → `model` …) with
@@ -77,6 +81,9 @@ Open http://localhost:3000.
 - **Subagents**: ask “use explore to search the web for LangGraph 1.x, then
   summarize” → a `task` chip / subagent card appears; the parent only sees the
   subagent’s final report, not its intermediate tool calls.
+- **Plan mode**: toggle **Plan** on the input bar, then ask “plan how to add a notes
+  file in the workspace.” The reply is a numbered plan; writes stay blocked until
+  you switch back to **Build**.
 - **Timeouts**: if the model stops responding, the request is aborted after
   `MODEL_TIMEOUT_MS` and a “⏱ Request timed out — check the API” notice appears.
 - Restart the server → sessions and history are restored from `.sessions.json`.
@@ -86,7 +93,7 @@ Open http://localhost:3000.
 ```
 src/
   index.ts           Bun.serve — routes: "/" (HTML), /api/chat, /api/sessions,
-                     /api/skills, /api/subagents, /api/approvals, files & upload endpoints
+                     /api/skills, /api/subagents, /api/approvals, session mode, files & upload endpoints
   agent.ts           LangGraph StateGraph (model/tools nodes) + streaming + timeout
   memory.ts          SessionStore — sessions, enabled skills, messages (persisted)
   rag.ts             in-memory vector store backing search_workspace
