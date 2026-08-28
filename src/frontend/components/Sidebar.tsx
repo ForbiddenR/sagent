@@ -18,11 +18,12 @@ interface SidebarProps {
   onToggleSkill: (name: string, enabled: boolean) => void;
   onOpenCreateSkill: () => void;
   onOpenEditSkill: (name: string) => void;
+  onOpenMarket: () => void;
 }
 
 type SidebarPanel = "workspace" | "skills";
 
-export function Sidebar({ sessions, activeSessionId, busySessionIds, files, skills, subagents, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill }: SidebarProps) {
+export function Sidebar({ sessions, activeSessionId, busySessionIds, files, skills, subagents, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill, onOpenMarket }: SidebarProps) {
   const [panel, setPanel] = useState<SidebarPanel>("workspace");
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const visibleFiles = files.filter((file) => !file.isDir);
@@ -110,9 +111,12 @@ export function Sidebar({ sessions, activeSessionId, busySessionIds, files, skil
         </div>
       ) : (
         <section className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wide muted">Skills</h2>
-            <button onClick={onOpenCreateSkill} className="btn-primary rounded-md px-2 py-1 text-xs font-medium">Add</button>
+            <div className="flex gap-1">
+              <button onClick={onOpenMarket} className="chip rounded-md border px-2 py-1 text-xs font-medium">Market</button>
+              <button onClick={onOpenCreateSkill} className="btn-primary rounded-md px-2 py-1 text-xs font-medium">Add</button>
+            </div>
           </div>
           <div className="muted text-xs">{activeSkills.size}/{skills.length} enabled</div>
           {skills.map((skill) => {
@@ -131,6 +135,7 @@ export function Sidebar({ sessions, activeSessionId, busySessionIds, files, skil
                       {skill.name}
                     </button>
                     <p className="muted text-xs">{skill.description}</p>
+                    {skill.origin && <p className="muted truncate text-[10px]">{skill.origin}</p>}
                   </div>
                 </div>
               </div>

@@ -5,7 +5,8 @@ import { FileEditor } from "./components/FileEditor";
 import { Bubble, EmptyState } from "./components/Message";
 import { Sidebar } from "./components/Sidebar";
 import { SkillEditor } from "./components/SkillEditor";
-import type { AgentEvent, Message, SessionFile, SessionMode, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary, ThinkingLevel } from "./types";
+import { SkillMarket } from "./components/SkillMarket";
+import type { AgentEvent, CatalogSkill, MarketplaceSource, Message, SessionFile, SessionMode, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary, ThinkingLevel } from "./types";
 import { blankSkill, getJson } from "./utils";
 
 function appendRunText(run: SubagentRun, text: string): SubagentRun {
@@ -26,6 +27,13 @@ function useAgentPage() {
   const [subagents, setSubagents] = useState<SubagentSummary[]>([]);
   const [skillEditor, setSkillEditor] = useState<SkillEditorState>(null);
   const [busySessions, setBusySessions] = useState<Set<string>>(() => new Set());
+  const [marketplaces, setMarketplaces] = useState<MarketplaceSource[]>([]);
+  const [selectedMarketplaceId, setSelectedMarketplaceId] = useState<string | null>(null);
+  const [marketCatalog, setMarketCatalog] = useState<CatalogSkill[] | null>(null);
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketError, setMarketError] = useState<string | null>(null);
+  const [installingSkill, setInstallingSkill] = useState<string | null>(null);
+  const [marketOpen, setMarketOpen] = useState(false);
 
   const activeSessionIdRef = useRef<string | null>(null);
   const busySessionsRef = useRef<Set<string>>(new Set());
@@ -63,6 +71,68 @@ function useAgentPage() {
     const data = await getJson<{ skills: SkillSummary[] }>("/api/skills");
     setSkills(data.skills);
     return data.skills;
+  }
+
+  async function loadMarketplace(id: string) {
+    setSelectedMarketplaceId(id);
+    setMarketLoading(true);
+    setMarketError(null);
+    try {
+      const data = await getJson<{ skills: CatalogSkill[] }>(`/api/marketplaces/${id}/skills`);
+      setMarketCatalog(data.skills);
+    } catch (err) {
+      setMarketCatalog([]);
+      setMarketError((err as Error).message);
+    } finally {
+      setMarketLoading(false);
+    }
+  }
+
+  async function addMarketplace(address: string) {
+    setMarketError(null);
+    try {
+      const data = await getJson<{ marketplace: MarketplaceSource; marketplaces: MarketplaceSource[] }>("/api/marketplaces", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      setMarketplaces(data.marketplaces);
+      await loadMarketplace(data.marketplace.id);
+    } catch (err) {
+      setMarketError((err as Error).message);
+    }
+  }
+
+  async function removeMarketplace(id: string) {
+    const data = await getJson<{ ok: boolean; marketplaces: MarketplaceSource[] }>(`/api/marketplaces/${id}`, {
+      method: "DELETE",
+    });
+    setMarketplaces(data.marketplaces);
+    if (selectedMarketplaceId === id) {
+      setSelectedMarketplaceId(null);
+      setMarketCatalog(null);
+      setMarketError(null);
+    }
+  }
+
+  async function installMarketSkill(name: string) {
+    if (!selectedMarketplaceId) return;
+    setInstallingSkill(name);
+    setMarketError(null);
+    try {
+      const data = await getJson<{ skill: Skill; skills: SkillSummary[] }>(`/api/marketplaces/${selectedMarketplaceId}/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      setSkills(data.skills);
+      setMarketCatalog((prev) => prev?.map((s) => (s.name === name ? { ...s, installed: true } : s)) ?? prev);
+      await refreshSessions();
+    } catch (err) {
+      setMarketError((err as Error).message);
+    } finally {
+      setInstallingSkill(null);
+    }
   }
 
   async function loadSession(id: string) {
@@ -369,13 +439,15 @@ function useAgentPage() {
 
   useEffect(() => {
     (async () => {
-      const [{ sessions }, { skills }, { subagents }] = await Promise.all([
+      const [{ sessions }, { skills }, { subagents }, { marketplaces }] = await Promise.all([
         getJson<{ sessions: SessionSummary[] }>("/api/sessions"),
         getJson<{ skills: SkillSummary[] }>("/api/skills"),
         getJson<{ subagents: SubagentSummary[] }>("/api/subagents"),
+        getJson<{ marketplaces: MarketplaceSource[] }>("/api/marketplaces"),
       ]);
       setSkills(skills);
       setSubagents(subagents);
+      setMarketplaces(marketplaces);
       if (sessions.length === 0) await createSession();
       else {
         setSessions(sessions);
@@ -396,6 +468,19 @@ function useAgentPage() {
     skillEditor,
     busy,
     busySessions,
+    marketplaces,
+    selectedMarketplaceId,
+    marketCatalog,
+    marketLoading,
+    marketError,
+    installingSkill,
+    marketOpen,
+    openMarket: () => setMarketOpen(true),
+    closeMarket: () => setMarketOpen(false),
+    addMarketplace,
+    loadMarketplace,
+    removeMarketplace,
+    installMarketSkill,
     send,
     loadSession,
     createSession,
@@ -445,6 +530,7 @@ function App() {
         onToggleSkill={state.toggleSkill}
         onOpenCreateSkill={state.openCreateSkill}
         onOpenEditSkill={state.openEditSkill}
+        onOpenMarket={state.openMarket}
       />
       <div className="flex h-full min-w-0 flex-1 flex-col px-4">
         <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
@@ -459,6 +545,7 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={state.openMarket} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80 md:hidden">Market</button>
               <button onClick={state.openCreateSkill} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80 md:hidden">Add skill</button>
               <button onClick={state.resetSession} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80">Clear messages</button>
             </div>
@@ -481,6 +568,20 @@ function App() {
         </div>
       </div>
       <SkillEditor editor={state.skillEditor} onClose={state.closeSkillEditor} onSave={state.saveSkill} onRemove={state.removeSkill} />
+      <SkillMarket
+        open={state.marketOpen}
+        sources={state.marketplaces}
+        catalog={state.marketCatalog}
+        selectedId={state.selectedMarketplaceId}
+        loading={state.marketLoading}
+        error={state.marketError}
+        installing={state.installingSkill}
+        onClose={state.closeMarket}
+        onAdd={state.addMarketplace}
+        onSelect={state.loadMarketplace}
+        onRemove={state.removeMarketplace}
+        onInstall={state.installMarketSkill}
+      />
       <FileEditor editor={state.fileEditor} onClose={state.closeFileEditor} onSave={state.saveFile} />
     </div>
   );

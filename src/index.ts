@@ -2,6 +2,13 @@ import index from "./frontend/index.html";
 import { createAgent, hasAnthropicAuth, type Agent, type ApprovalRequest } from "./agent.ts";
 import { deleteSkill, loadSkills, saveSkill, type Skill, type SkillInput } from "./skills.ts";
 import { loadSubagents, type SubagentDef } from "./subagents.ts";
+import {
+  addMarketplace,
+  browseMarketplace,
+  installMarketplaceSkill,
+  listMarketplaces,
+  removeMarketplace,
+} from "./marketplace.ts";
 import { appendSubagentText, memory, type ClientMessage } from "./memory.ts";
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -57,6 +64,10 @@ function requireSession(sessionId?: string) {
   return sessionId;
 }
 
+function skillSummaries() {
+  return skills.map(({ name, description, origin }) => ({ name, description, origin }));
+}
+
 function parseSkillInput(input: unknown): SkillInput | undefined {
   const body = input as Partial<SkillInput>;
   if (!body || typeof body.name !== "string") return undefined;
@@ -64,6 +75,7 @@ function parseSkillInput(input: unknown): SkillInput | undefined {
     name: body.name,
     description: typeof body.description === "string" ? body.description : "",
     body: typeof body.body === "string" ? body.body : "",
+    origin: typeof body.origin === "string" ? body.origin : undefined,
   };
 }
 
@@ -283,9 +295,7 @@ const server = Bun.serve({
 
     "/api/skills": {
       GET() {
-        return json({
-          skills: skills.map(({ name, description }) => ({ name, description })),
-        });
+        return json({ skills: skillSummaries() });
       },
       async POST(req) {
         const input = parseSkillInput(await req.json().catch(() => ({})));
@@ -293,7 +303,7 @@ const server = Bun.serve({
         const saved = await saveSkill(input);
         await reloadSkills();
         memory.enableSkillForAll(saved.name);
-        return json({ skill: saved, skills: skills.map(({ name, description }) => ({ name, description })) });
+        return json({ skill: saved, skills: skillSummaries() });
       },
     },
 
@@ -308,13 +318,69 @@ const server = Bun.serve({
         if (!input) return json({ error: "name, description, and body are required" }, 400);
         const saved = await saveSkill({ ...input, name: req.params.name });
         await reloadSkills();
-        return json({ skill: saved, skills: skills.map(({ name, description }) => ({ name, description })) });
+        return json({ skill: saved, skills: skillSummaries() });
       },
       async DELETE(req) {
         const deleted = await deleteSkill(req.params.name);
         await reloadSkills();
         memory.disableSkillForAll(req.params.name);
-        return json({ ok: deleted, skills: skills.map(({ name, description }) => ({ name, description })) });
+        return json({ ok: deleted, skills: skillSummaries() });
+      },
+    },
+
+    "/api/marketplaces": {
+      GET: async () => json({ marketplaces: await listMarketplaces() }),
+      async POST(req) {
+        const body = (await req.json().catch(() => ({}))) as { address?: string };
+        if (typeof body.address !== "string" || !body.address.trim()) {
+          return json({ error: "address is required (owner/repo, git URL, marketplace.json URL, or local path)" }, 400);
+        }
+        try {
+          const marketplace = await addMarketplace(body.address);
+          return json({ marketplace, marketplaces: await listMarketplaces() });
+        } catch (err) {
+          return json({ error: (err as Error).message }, 400);
+        }
+      },
+    },
+
+    "/api/marketplaces/:id": {
+      async DELETE(req) {
+        const deleted = await removeMarketplace(req.params.id);
+        if (!deleted) return json({ error: "Marketplace not found" }, 404);
+        return json({ ok: true, marketplaces: await listMarketplaces() });
+      },
+    },
+
+    "/api/marketplaces/:id/skills": {
+      async GET(req) {
+        try {
+          const catalog = await browseMarketplace(req.params.id);
+          return json(catalog);
+        } catch (err) {
+          const message = (err as Error).message;
+          const status = message === "Marketplace not found" ? 404 : 400;
+          return json({ error: message }, status);
+        }
+      },
+    },
+
+    "/api/marketplaces/:id/install": {
+      async POST(req) {
+        const body = (await req.json().catch(() => ({}))) as { name?: string };
+        if (typeof body.name !== "string" || !body.name.trim()) {
+          return json({ error: "name is required" }, 400);
+        }
+        try {
+          const skill = await installMarketplaceSkill(req.params.id, body.name.trim());
+          await reloadSkills();
+          memory.enableSkillForAll(skill.name);
+          return json({ skill, skills: skillSummaries() });
+        } catch (err) {
+          const message = (err as Error).message;
+          const status = message === "Marketplace not found" ? 404 : 400;
+          return json({ error: message }, status);
+        }
       },
     },
 

@@ -7,3 +7,5 @@ dist/
 workspace/
 agent-linux-x64
 .sessions.json
+.marketplaces.json
+.marketplaces/

@@ -61,10 +61,33 @@ export interface SessionFile {
 export interface SkillSummary {
   name: string;
   description: string;
+  origin?: string;
 }
 
 export interface Skill extends SkillSummary {
   body: string;
+}
+
+export interface MarketplaceSource {
+  id: string;
+  address: string;
+  kind: "github" | "git" | "json" | "local";
+  label: string;
+  addedAt: string;
+  updatedAt?: string;
+  lastError?: string;
+}
+
+export interface CatalogSkill {
+  name: string;
+  description: string;
+  path: string;
+  installed: boolean;
+}
+
+export interface MarketplaceCatalog {
+  source: MarketplaceSource;
+  skills: CatalogSkill[];
 }
 
 export interface SubagentSummary {

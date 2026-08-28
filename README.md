@@ -7,6 +7,8 @@ demonstrates a few things in a minimal, readable way:
 - **Skills** — Claude Code–style. Each skill is a folder under `skills/` with a
   `SKILL.md`. The agent sees a one-line index of every skill and loads a skill's
   full instructions *on demand* via the `load_skill` tool (progressive disclosure).
+  A **skill market** lets you add third-party sources (`owner/repo`, a git URL,
+  or a `marketplace.json` URL) and install skills from them.
 - **Subagents** — OpenCode / Claude Code / Codex-style. The parent calls `task`
   to spawn a specialized worker (`general`, `explore`, or a custom
   `agents/<name>/AGENT.md`) with a fresh context. Independent `task` calls in
@@ -72,6 +74,9 @@ Open http://localhost:3000.
 - **Skills**: inspect `calculator` or `poetry` in the sidebar, toggle them on/off per
   session, then ask “Write me a haiku about the sea.” → when `poetry` is enabled,
   a `load_skill` chip appears and the reply follows the skill's rules.
+- **Skill market**: on the Skills tab, open **Market**, add `anthropics/skills`
+  (or any git / `marketplace.json` URL), then Install a listed skill. It lands in
+  `skills/` and is enabled for every session.
 - **Files & bash**: ask the agent to create or read a file in its workspace, or to run
   a shell command → `run_bash` requests approval first via an inline card; approve to
   run it. Browse/edit uploaded files from the file panel.
@@ -98,11 +103,12 @@ Open http://localhost:3000.
 ```
 src/
   index.ts           Bun.serve — routes: "/" (HTML), /api/chat, /api/sessions,
-                     /api/skills, /api/subagents, /api/approvals, session mode/thinking, files & upload endpoints
+                     /api/skills, /api/marketplaces, /api/subagents, /api/approvals, session mode/thinking, files & upload endpoints
   agent.ts           LangGraph StateGraph (model/tools nodes) + streaming + timeout
   memory.ts          SessionStore — sessions, enabled skills, messages (persisted)
   rag.ts             in-memory vector store backing search_workspace
   skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
+  marketplace.ts     third-party skill sources (GitHub / git / marketplace.json)
   tools.ts           calculator, current_time, read_file, write_file, run_bash,
                      search_workspace, web_search_exa, web_fetch_exa, load_skill, task, switch_mode
   subagents.ts       load AGENT.md folders, built-in general / explore catalog
@@ -134,6 +140,23 @@ Detailed instructions the agent reads after calling load_skill("my-skill").
 ```
 
 Restart the server — it's picked up automatically.
+
+## Skill market
+
+Open **Market** from the Skills tab and paste a source address:
+
+| Address | Example |
+|---------|---------|
+| GitHub `owner/repo` | `anthropics/skills` |
+| GitHub URL | `https://github.com/anthropics/skills` |
+| Git URL | `https://gitlab.com/org/skills.git` |
+| Catalog JSON | `https://example.com/marketplace.json` |
+| Local path | `./my-marketplace` |
+
+SAgent reads Claude Code `marketplace.json` catalogs when present, otherwise it
+scans the repo for `**/SKILL.md`. Install copies the skill folder into
+`skills/<name>/` (with an `origin` stamp) and enables it for every session.
+Sources are stored in `.marketplaces.json`.
 
 ## Adding a subagent
 
@@ -173,6 +196,7 @@ All options are read from the environment (Bun auto-loads `.env`). See `.env.exa
 | `MAX_MODEL_MESSAGES`  | `100`                | Max recent messages sent back to the model for context. Full frontend session messages are still persisted separately. |
 | `SESSION_STORE_FILE`  | `.sessions.json`     | Where persisted sessions are stored. |
 | `WORKSPACE`           | `./workspace`        | Workspace folder for the `read_file` / `write_file` tools. |
+| `GITHUB_TOKEN`        | —                    | Optional. Higher GitHub API rate limits for the skill market. `GH_TOKEN` is also accepted. |
 | `PORT`                | `3000`               | Server port. |
 | `NODE_ENV`            | —                    | Set to `production` to disable dev-only behavior (e.g. HMR). |
 
