@@ -242,11 +242,23 @@ class SessionStore {
     this.persistSoon();
   }
 
+  firstUserText(sessionId: string): string {
+    const record = this.sessions.get(sessionId);
+    const msg = record?.clientMessages.find((m) => m.role === "user");
+    return typeof msg?.text === "string" ? msg.text : "";
+  }
+
   /** First user turn that still has a placeholder title (not user-renamed). */
   needsAutoTitle(sessionId: string): boolean {
     const record = this.sessions.get(sessionId);
     if (!record || record.titleSource === "user") return false;
-    return record.clientMessages.filter((m) => m.role === "user").length === 1;
+    const users = record.clientMessages.filter((m) => m.role === "user");
+    if (users.length === 1) return true;
+    // Recover from the old fallback that copied the first prompt into the title.
+    const first = (users[0]?.text ?? "").replace(/\s+/g, " ").trim();
+    const title = record.title.replace(/\s+/g, " ").trim();
+    if (!first) return false;
+    return title === first || title === first.slice(0, 36) || title === `${first.slice(0, 36)}…`;
   }
 
   setTitle(sessionId: string, title: string, source: TitleSource): SessionSummary | undefined {

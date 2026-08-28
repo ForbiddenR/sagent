@@ -23,7 +23,8 @@ demonstrates a few things in a minimal, readable way:
   thinking stream shows as a collapsible **Thought** block above the reply.
 - **Memory** — conversation history per session id, **persisted to `.sessions.json`**
   so sessions survive server restarts. The first prompt mints a short **session title**
-  in the background (Haiku-class, no tools); double-click a row to rename it.
+  in the background (cheap model, no tools, thinking off). If that call fails, the
+  placeholder date title is kept — never a copy of the prompt. Double-click a row to rename it.
 - **Agent loop** — a LangGraph `StateGraph` (`model` → `tools` → `model` …) with
   streaming tokens, a tool-round cap, and an abort-on-stall timeout that notifies
   the user when the API is unresponsive.
@@ -196,8 +197,8 @@ All options are read from the environment (Bun auto-loads `.env`). See `.env.exa
 | `ANTHROPIC_API_KEY`   | —                    | Console API key from https://console.anthropic.com/. Required unless `ANTHROPIC_AUTH_TOKEN` is set. |
 | `ANTHROPIC_AUTH_TOKEN`| —                    | Bearer token (Claude Code / OAuth / some gateways). Used if `ANTHROPIC_API_KEY` is unset. |
 | `MODEL`               | `claude-opus-4-8`    | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
-| `TITLE_MODEL`         | `claude-haiku-4-5`   | Cheap model used only to generate a session title from the first prompt. No tools, no thinking. |
-| `TITLE_TIMEOUT_MS`    | `8000`               | Max ms to wait for a title; falls back to a truncated first message. |
+| `TITLE_MODEL`         | Haiku, or `MODEL` on a gateway | Cheap model for the first-prompt title. No tools, no thinking. Unset + `ANTHROPIC_BASE_URL` uses `MODEL` so gateways that do not serve Haiku skip a 502. If the cheap model is unavailable, retries with `MODEL`. |
+| `TITLE_TIMEOUT_MS`    | `20000`              | Max ms to wait for a title; on failure the placeholder date title is kept. |
 | `ANTHROPIC_BASE_URL`  | Anthropic API        | Optional. Point at an Anthropic-compatible endpoint (gateway/proxy, e.g. LiteLLM, Cloudflare AI Gateway, a corporate proxy). Must speak the Anthropic `/v1/messages` API. Leave unset for the default. |
 | `EXA_API_KEY`         | —                    | Optional. Higher rate limits for `web_search_exa` / `web_fetch_exa`. Without it, tools use Exa's hosted MCP at https://mcp.exa.ai/mcp (free, rate-limited). |
 | `MODEL_TIMEOUT_MS`    | `60000`              | Max ms to wait for the next model chunk before treating the request as timed out (a streaming response is not interrupted; only total silence trips it). Emits a timeout notification so the user knows to check the API. |

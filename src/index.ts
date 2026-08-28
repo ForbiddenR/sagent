@@ -11,7 +11,7 @@ import {
   removeMarketplace,
 } from "./marketplace.ts";
 import { appendSubagentText, appendSubagentThinking, memory, type ClientMessage } from "./memory.ts";
-import { generateSessionTitle } from "./title.ts";
+import { errorMessage, generateSessionTitle } from "./title.ts";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DEV = process.env.NODE_ENV !== "production";
@@ -495,17 +495,8 @@ const server = Bun.serve({
               enqueue(enc.encode(`data: ${JSON.stringify(event)}\n\n`));
 
             const run = (async () => {
-            const titleTask = memory.needsAutoTitle(sessionId)
-              ? generateSessionTitle(message)
-                  .then((title) => {
-                    const session = memory.setTitle(sessionId, title, "auto");
-                    if (session && !closed) send({ type: "title", title: session.title });
-                  })
-                  .catch((err) => {
-                    console.warn(`⚠️  Session title generation failed: ${(err as Error).message}`);
-                  })
-              : Promise.resolve();
-
+            const wantTitle = memory.needsAutoTitle(sessionId);
+            const titleSeed = memory.firstUserText(sessionId) || message;
             try {
               for await (const event of agent.run(sessionId, message)) {
                 if (closed || req.signal.aborted) break;
@@ -569,7 +560,19 @@ const server = Bun.serve({
                 send({ type: "error", message });
               }
             } finally {
-              await titleTask;
+              // After the chat turn (OpenCode forks; we wait so the SSE can
+              // carry `{ type: "title" }`). Isolated HTTP — not Bun's fetch pool.
+              if (wantTitle) {
+                try {
+                  const title = await generateSessionTitle(titleSeed);
+                  if (title) {
+                    const session = memory.setTitle(sessionId, title, "auto");
+                    if (session && !closed) send({ type: "title", title: session.title });
+                  }
+                } catch (err) {
+                  console.warn(`⚠️  Session title generation failed: ${errorMessage(err)}`);
+                }
+              }
               if (!assistantMessage.completed && !assistantMessage.error) {
                 assistantMessage.completed = true;
               }
