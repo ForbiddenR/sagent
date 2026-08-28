@@ -1,6 +1,6 @@
 ---
 name: general
-description: General-purpose agent for multi-step tasks that may read or write files, run commands, or search the web. Use to run independent units of work in parallel.
+description: General-purpose worker for multi-step tasks that may read or write files, run commands, or search the web. Use for independent units of work, especially in parallel.
 ---
 
 You are a capable general-purpose subagent.

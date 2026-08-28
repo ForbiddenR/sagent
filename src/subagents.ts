@@ -73,7 +73,7 @@ export const BUILTIN_SUBAGENTS: SubagentDef[] = [
   {
     name: "general",
     description:
-      "General-purpose agent for multi-step tasks that may read or write files, run commands, or search the web. Use to run independent units of work in parallel.",
+      "General-purpose worker for multi-step tasks that may read or write files, run commands, or search the web. Use for independent units of work, especially in parallel.",
     prompt: [
       "You are a capable general-purpose subagent.",
       "Complete the assigned task thoroughly.",
@@ -84,7 +84,7 @@ export const BUILTIN_SUBAGENTS: SubagentDef[] = [
   {
     name: "explore",
     description:
-      "Fast, read-only agent for searching the workspace or the public web. Cannot modify files or run shell commands.",
+      "Read-only researcher. Use when searching the workspace or the public web and you do not already know the exact path or URL. Cannot write files or run shell commands.",
     prompt: [
       "You are a read-only exploration subagent.",
       "Find the requested information using read, search, and web tools only.",
@@ -136,4 +136,34 @@ export async function loadSubagents(agentsDir = `${process.cwd()}/agents`): Prom
 export function renderSubagentCatalog(subagents: SubagentDef[]): string {
   if (subagents.length === 0) return "No subagents are currently available.";
   return subagents.map((s) => `- ${s.name}: ${s.description}`).join("\n");
+}
+
+/**
+ * When-to-delegate help. Claude Code / OpenCode put this in the parent prompt
+ * and the Task tool — a catalog alone is not enough; the parent has the same
+ * search tools and will use them unless told to spawn a worker instead.
+ */
+export function renderSubagentGuidance(subagents: SubagentDef[], mode: SessionMode = "build"): string {
+  const catalog = renderSubagentCatalog(subagents);
+  const modeNote =
+    mode === "plan"
+      ? "You are in Plan mode: only spawn read-only types such as `explore`. Do not spawn write-capable subagents."
+      : "Prefer `explore` for research; `general` for implementation or mixed read/write work.";
+
+  return [
+    "Subagents (`task`):",
+    "A subagent has a fresh context. Its tool traces stay out of this conversation; only the final report comes back. Prefer that over doing open-ended search or independent multi-step work yourself.",
+    "It is CRITICAL that you use `task` with `subagent_type=explore` when researching the workspace or the public web and you do not already know the exact path or URL. Do not chain many `search_workspace` / `web_search_exa` / `read_file` / `web_fetch_exa` calls here — spawn `explore` instead.",
+    "Use `task` when:",
+    "- Open-ended find / search / look-up / summarize-from-sources → `explore`.",
+    "- Independent pieces of work (different topics, files, or sources) → several `task` calls in the SAME turn so they run in parallel.",
+    "- Multi-step implementation that would dump lots of intermediate tool output into this chat → `general`.",
+    "- The user asks you to use a subagent, explore, or delegate.",
+    "Do not use `task` for a needle query: one known-path `read_file`, one calculator call, one targeted search when you already know the query, greetings, or identity questions.",
+    "The subagent cannot see this conversation. Put every file path, URL, constraint, and expected output in `prompt`. You cannot nest subagents.",
+    modeNote,
+    "",
+    "Available types:",
+    catalog,
+  ].join("\n");
 }

@@ -1,6 +1,6 @@
 ---
 name: explore
-description: Fast, read-only agent for searching the workspace or the public web. Cannot modify files or run shell commands.
+description: Read-only researcher. Use when searching the workspace or the public web and you do not already know the exact path or URL. Cannot write files or run shell commands.
 tools: calculator, current_time, read_file, search_workspace, web_search_exa, web_fetch_exa, load_skill
 ---
 

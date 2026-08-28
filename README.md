@@ -9,10 +9,11 @@ demonstrates a few things in a minimal, readable way:
   full instructions *on demand* via the `load_skill` tool (progressive disclosure).
   A **skill market** lets you add third-party sources (`owner/repo`, a git URL,
   or a `marketplace.json` URL) and install skills from them.
-- **Subagents** — OpenCode / Claude Code / Codex-style. The parent calls `task`
-  to spawn a specialized worker (`general`, `explore`, or a custom
-  `agents/<name>/AGENT.md`) with a fresh context. Independent `task` calls in
+- **Subagents** — OpenCode / Claude Code / Codex-style. The parent is told to
+  spawn `explore` for open-ended research (instead of chaining searches itself)
+  and `general` for independent multi-step work. Independent `task` calls in
   one turn run in parallel; only the subagent's final answer returns to the parent.
+  Custom types live in `agents/<name>/AGENT.md`.
 - **Plan mode** — OpenCode-style primary mode. Toggle Plan / Build on the input
   bar, or let the agent call `switch_mode`. Plan is read-only (`write_file` and
   `run_bash` off; `task` may only spawn read-only workers like `explore`).
@@ -91,9 +92,11 @@ Open http://localhost:3000.
   to rename — a manual name is never overwritten.
 - **Memory**: ask a follow-up like “what did I just ask?” → prior turns in the
   selected session are remembered.
-- **Subagents**: ask “use explore to search the web for LangGraph 1.x, then
-  summarize” → a `task` chip / subagent card appears; the parent only sees the
-  subagent’s final report, not its intermediate tool calls.
+- **Subagents**: ask something open-ended like “search the web for LangGraph 1.x
+  and summarize the 1.x changes” (or “use explore to …”) → a `task` chip /
+  subagent card appears; the parent only sees the subagent’s final report, not
+  its intermediate tool calls. A single known-path read or one calculator call
+  stays on the parent.
 - **Plan mode**: toggle **Plan** on the input bar (or ask “plan how to add a notes
   file”) → the agent may call `switch_mode`. The reply is a numbered plan; writes
   stay blocked until you (or the agent, after you accept) switch to **Build**.

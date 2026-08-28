@@ -17,7 +17,7 @@ import { renderSkillIndex, type Skill } from "./skills.ts";
 import {
   PLAN_PARENT_TOOLS,
   isReadOnlySubagent,
-  renderSubagentCatalog,
+  renderSubagentGuidance,
   subagentsForMode,
   type SubagentDef,
 } from "./subagents.ts";
@@ -290,10 +290,9 @@ export function createAgent(
     const common = [
       "Use the `calculator` tool for any non-trivial arithmetic.",
       "Use `current_time` when the user asks about the date or time.",
-      "Use `read_file` to read files in your private session workspace.",
-      "Use `search_workspace` to search all workspace files by semantic meaning (better than read_file when you don't know the exact filename).",
-      "Use `web_search_exa` to search the public web for current information. Follow up with `web_fetch_exa` to read full pages when search highlights are not enough.",
-      "Use the `task` tool to delegate independent subtasks to specialized subagents. Each subagent starts with a fresh context — put every file path, constraint, and expected output in `prompt`. Launch multiple `task` calls in one turn to run them in parallel. Do not spawn a subagent for work a single tool call can finish.",
+      "Use `read_file` when you already know the path in your private session workspace.",
+      "Use `search_workspace` for a single targeted lookup when you know what to search. For open-ended exploration of the workspace, spawn `explore` instead.",
+      "Use `web_search_exa` / `web_fetch_exa` for one or two targeted lookups. For research that needs several searches or pages, spawn `explore` instead.",
       "Use `switch_mode` to move this session between Plan and Build. After it returns, continue in the new mode with the tools it unlocks.",
     ];
 
@@ -302,7 +301,7 @@ export function createAgent(
         ? [
             "You are in PLAN MODE. Analyze and propose a plan. Do not implement it yet.",
             "You cannot write files or run shell commands. `write_file` and `run_bash` are disabled.",
-            "If you need extra research, spawn the `explore` subagent (read-only). Do not spawn write-capable subagents.",
+            "If you need extra research, it is CRITICAL that you spawn `explore` (read-only) instead of searching yourself. Do not spawn write-capable subagents.",
             "Return a numbered plan with: goal, steps, files or commands involved, risks, and what to do in Build.",
             "When the user asks you to implement, or clearly accepts the plan, call `switch_mode` with mode=\"build\" and then implement. Do not switch to Build on your own.",
             "Do not claim you have already made changes while still in Plan.",
@@ -318,8 +317,7 @@ export function createAgent(
       ...modeLines,
       ...common,
       "",
-      "Available subagents:",
-      renderSubagentCatalog(subagents),
+      renderSubagentGuidance(subagents, mode),
       "",
       "Enabled skills (call `load_skill` with the skill name to read its full",
       "instructions BEFORE doing a task it covers):",
@@ -368,6 +366,7 @@ export function createAgent(
     ctx.tools = buildTools(ctx.skills, ctx.sessionId, {
       allowedTools: mode === "plan" ? PLAN_PARENT_TOOLS : undefined,
       subagents: parentSubagents,
+      mode,
       allowModeSwitch: true,
     });
     memory.setMode(ctx.sessionId, mode);
@@ -613,6 +612,7 @@ export function createAgent(
     const tools = buildTools(activeSkills, sessionId, {
       allowedTools: mode === "plan" ? PLAN_PARENT_TOOLS : undefined,
       subagents: parentSubagents,
+      mode,
       allowModeSwitch: true,
     });
     const events = new EventQueue<AgentEvent>();

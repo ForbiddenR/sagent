@@ -4,7 +4,8 @@ import { Parser } from "expr-eval";
 import type { Skill } from "./skills.ts";
 import { ragStore } from "./rag.ts";
 import { webFetchExa, webSearchExa } from "./exa.ts";
-import { renderSubagentCatalog, type SubagentDef } from "./subagents.ts";
+import type { SessionMode } from "./memory.ts";
+import { renderSubagentGuidance, type SubagentDef } from "./subagents.ts";
 
 const exprParser = new Parser();
 const WORKSPACE = process.env.WORKSPACE || `${process.cwd()}/workspace`;
@@ -146,6 +147,8 @@ export interface BuildToolsOptions {
   allowedTools?: string[];
   /** When provided, expose the `task` tool so the parent can spawn subagents. */
   subagents?: SubagentDef[];
+  /** Session mode so the `task` tool description matches Plan vs Build. */
+  mode?: SessionMode;
   /** Parent-only. Lets the agent flip Plan / Build mid-turn. */
   allowModeSwitch?: boolean;
 }
@@ -298,7 +301,6 @@ export function buildTools(
   const filtered = allowed ? tools.filter((t) => allowed.has(t.name)) : tools;
 
   if (options.subagents && options.subagents.length > 0) {
-    const catalog = renderSubagentCatalog(options.subagents);
     filtered.push(
       tool(
         async () =>
@@ -306,11 +308,13 @@ export function buildTools(
         {
           name: "task",
           description:
-            "Delegate a focused subtask to a specialized subagent with its own fresh context. " +
-            "The subagent does not see this conversation — put every file path, constraint, and expected output in `prompt`. " +
+            "Launch a specialized subagent with a fresh context. Prefer this over chaining many search/read/web calls yourself — " +
+            "only the final report returns here. " +
+            "It is CRITICAL to spawn `explore` for open-ended research of the workspace or the public web when you do not already know the exact path or URL. " +
+            "Spawn `general` for independent multi-step implementation. " +
             "Call this multiple times in one turn to run independent subagents in parallel. " +
-            "Do not use it for work a single tool call can finish.\n\n" +
-            `Available subagent types:\n${catalog}`,
+            "Do not use it for a needle query (one known-path read, one calculator call, one targeted search).\n\n" +
+            renderSubagentGuidance(options.subagents, options.mode ?? "build"),
           schema: z.object({
             description: z
               .string()
