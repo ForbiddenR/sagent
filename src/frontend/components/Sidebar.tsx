@@ -5,6 +5,7 @@ import { formatTime } from "../utils";
 interface SidebarProps {
   sessions: SessionSummary[];
   activeSessionId: string | null;
+  busySessionIds?: Set<string>;
   files: SessionFile[];
   skills: SkillSummary[];
   subagents: SubagentSummary[];
@@ -21,7 +22,7 @@ interface SidebarProps {
 
 type SidebarPanel = "workspace" | "skills";
 
-export function Sidebar({ sessions, activeSessionId, files, skills, subagents, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill }: SidebarProps) {
+export function Sidebar({ sessions, activeSessionId, busySessionIds, files, skills, subagents, activeSkills, onLoadSession, onCreateSession, onDeleteSession, onUploadFile, onOpenFileEditor, onToggleSkill, onOpenCreateSkill, onOpenEditSkill }: SidebarProps) {
   const [panel, setPanel] = useState<SidebarPanel>("workspace");
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const visibleFiles = files.filter((file) => !file.isDir);
@@ -62,7 +63,12 @@ export function Sidebar({ sessions, activeSessionId, files, skills, subagents, a
                 {sessions.map((session) => (
                   <div key={session.id} className={`group rounded-lg border p-2 ${session.id === activeSessionId ? "border-zinc-900 dark:border-zinc-100" : "border-transparent hover:border-zinc-200 dark:hover:border-zinc-800"}`}>
                     <button onClick={() => onLoadSession(session.id)} className="w-full text-left">
-                      <div className="truncate text-sm font-medium">{session.title}</div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="truncate text-sm font-medium">{session.title}</div>
+                        {busySessionIds?.has(session.id) && (
+                          <span className="muted shrink-0 animate-pulse text-[10px] uppercase tracking-wide">running</span>
+                        )}
+                      </div>
                       <div className="muted mt-0.5 text-xs">{session.messageCount} messages · {formatTime(session.updatedAt)}</div>
                     </button>
                     <div className="mt-2 flex gap-2 opacity-70 group-hover:opacity-100">

@@ -12,9 +12,9 @@ demonstrates a few things in a minimal, readable way:
   `agents/<name>/AGENT.md`) with a fresh context. Independent `task` calls in
   one turn run in parallel; only the subagent's final answer returns to the parent.
 - **Plan mode** — OpenCode-style primary mode. Toggle Plan / Build on the input
-  bar. Plan is read-only (`write_file` and `run_bash` off; `task` may only spawn
-  read-only workers like `explore`). Switch to Build to implement the plan. The
-  conversation stays in the same session.
+  bar, or let the agent call `switch_mode`. Plan is read-only (`write_file` and
+  `run_bash` off; `task` may only spawn read-only workers like `explore`).
+  Switch to Build to implement the plan. The conversation stays in the same session.
 - **Thinking level** — Claude adaptive thinking (`output_config.effort`). Toggle
   Low / Med / High / xHigh / Max on the input bar. Higher effort thinks more
   before answering (slower, better on hard tasks). Default is High.
@@ -26,7 +26,7 @@ demonstrates a few things in a minimal, readable way:
 - **Tools** — `calculator`, `current_time`, `read_file`, `write_file`, `run_bash`
   (with human-in-the-loop approval), `search_workspace` (semantic, RAG-backed),
   `web_search_exa` / `web_fetch_exa` (Exa web search and page fetch),
-  `load_skill`, and `task`.
+  `load_skill`, `task`, and `switch_mode` (Plan ↔ Build).
 - **Workspace** — each session gets a private folder for files; upload, browse,
   and edit them from the UI.
 
@@ -84,9 +84,9 @@ Open http://localhost:3000.
 - **Subagents**: ask “use explore to search the web for LangGraph 1.x, then
   summarize” → a `task` chip / subagent card appears; the parent only sees the
   subagent’s final report, not its intermediate tool calls.
-- **Plan mode**: toggle **Plan** on the input bar, then ask “plan how to add a notes
-  file in the workspace.” The reply is a numbered plan; writes stay blocked until
-  you switch back to **Build**.
+- **Plan mode**: toggle **Plan** on the input bar (or ask “plan how to add a notes
+  file”) → the agent may call `switch_mode`. The reply is a numbered plan; writes
+  stay blocked until you (or the agent, after you accept) switch to **Build**.
 - **Thinking**: set Low / Med / High / xHigh / Max on the input bar. High is the
   default; Max spends the most time reasoning.
 - **Timeouts**: if the model stops responding, the request is aborted after
@@ -104,7 +104,7 @@ src/
   rag.ts             in-memory vector store backing search_workspace
   skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
   tools.ts           calculator, current_time, read_file, write_file, run_bash,
-                     search_workspace, web_search_exa, web_fetch_exa, load_skill, task
+                     search_workspace, web_search_exa, web_fetch_exa, load_skill, task, switch_mode
   subagents.ts       load AGENT.md folders, built-in general / explore catalog
   exa.ts             hosted Exa MCP client for web_search_exa / web_fetch_exa
   frontend/

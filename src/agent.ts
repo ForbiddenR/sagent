@@ -126,6 +126,7 @@ export type AgentEvent =
   | { type: "subagent_done"; id: string; name: string; text: string }
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
+  | { type: "mode"; mode: SessionMode }
   | { type: "done"; text: string }
   | { type: "timeout"; message: string }
   | { type: "error"; message: string };
@@ -271,21 +272,24 @@ export function createAgent(
       "Use `search_workspace` to search all workspace files by semantic meaning (better than read_file when you don't know the exact filename).",
       "Use `web_search_exa` to search the public web for current information. Follow up with `web_fetch_exa` to read full pages when search highlights are not enough.",
       "Use the `task` tool to delegate independent subtasks to specialized subagents. Each subagent starts with a fresh context — put every file path, constraint, and expected output in `prompt`. Launch multiple `task` calls in one turn to run them in parallel. Do not spawn a subagent for work a single tool call can finish.",
+      "Use `switch_mode` to move this session between Plan and Build. After it returns, continue in the new mode with the tools it unlocks.",
     ];
 
     const modeLines =
       mode === "plan"
         ? [
-            "You are in PLAN MODE. Analyze and propose a plan. Do not implement it.",
+            "You are in PLAN MODE. Analyze and propose a plan. Do not implement it yet.",
             "You cannot write files or run shell commands. `write_file` and `run_bash` are disabled.",
             "If you need extra research, spawn the `explore` subagent (read-only). Do not spawn write-capable subagents.",
-            "Return a numbered plan with: goal, steps, files or commands involved, risks, and what to do after the user switches to Build.",
-            "Wait for the user to accept the plan (they will switch the session to Build). Do not claim you have already made changes.",
+            "Return a numbered plan with: goal, steps, files or commands involved, risks, and what to do in Build.",
+            "When the user asks you to implement, or clearly accepts the plan, call `switch_mode` with mode=\"build\" and then implement. Do not switch to Build on your own.",
+            "Do not claim you have already made changes while still in Plan.",
           ]
         : [
-            "You are a helpful assistant with access to tools and a set of enabled skills.",
+            "You are in BUILD MODE. You are a helpful assistant with access to tools and a set of enabled skills.",
             "Use `write_file` to write files in your private session workspace.",
             "Use `run_bash` to execute shell commands in your session workspace.",
+            "If the user asks you to plan first (or the task is ambiguous/risky), call `switch_mode` with mode=\"plan\" before writing files.",
           ];
 
     return [
@@ -336,6 +340,42 @@ export function createAgent(
     }
   }
 
+  function applyMode(ctx: LoopContext, mode: SessionMode) {
+    ctx.mode = mode;
+    const parentSubagents = subagentsForMode(allSubagents, mode);
+    ctx.tools = buildTools(ctx.skills, ctx.sessionId, {
+      allowedTools: mode === "plan" ? PLAN_PARENT_TOOLS : undefined,
+      subagents: parentSubagents,
+      allowModeSwitch: true,
+    });
+    memory.setMode(ctx.sessionId, mode);
+    ctx.events.push({ type: "mode", mode });
+  }
+
+  function switchMode(ctx: LoopContext, args: Record<string, unknown>): string {
+    const next = typeof args.mode === "string" ? args.mode.trim() : "";
+    if (next !== "plan" && next !== "build") {
+      return "Error: mode must be 'plan' or 'build'.";
+    }
+    if (ctx.mode === next) {
+      return `Already in ${next} mode.`;
+    }
+    applyMode(ctx, next);
+    if (next === "plan") {
+      return [
+        "Switched to PLAN mode.",
+        "write_file and run_bash are now disabled.",
+        "task may only spawn read-only subagents such as explore.",
+        "Propose a numbered plan. Do not implement until the user accepts it, then switch_mode to build.",
+      ].join(" ");
+    }
+    return [
+      "Switched to BUILD mode.",
+      "write_file and run_bash are now available.",
+      "Implement the accepted plan. Do not re-plan unless the user asks.",
+    ].join(" ");
+  }
+
   async function invokeTool(
     ctx: LoopContext,
     call: ToolCallLike,
@@ -343,6 +383,13 @@ export function createAgent(
     const args = call.args ?? {};
     if (call.name === "task") {
       return runTask(ctx, args);
+    }
+    if (call.name === "switch_mode") {
+      if (ctx.subagent) {
+        return "Error: subagents cannot switch session mode. Complete the assigned task.";
+      }
+      emitTool(ctx, call.name, args);
+      return switchMode(ctx, args);
     }
 
     emitTool(ctx, call.name, args);
@@ -443,9 +490,8 @@ export function createAgent(
       rounds: Annotation<number>(),
     });
 
-    const model = llm(ctx.tools, ctx.thinking);
-
     async function callModel(state: typeof StateAnnotation.State) {
+      const model = llm(ctx.tools, ctx.thinking);
       const controller = new AbortController();
       const stream = model.stream(state.messages, { signal: controller.signal });
 
@@ -540,6 +586,7 @@ export function createAgent(
     const tools = buildTools(activeSkills, sessionId, {
       allowedTools: mode === "plan" ? PLAN_PARENT_TOOLS : undefined,
       subagents: parentSubagents,
+      allowModeSwitch: true,
     });
     const events = new EventQueue<AgentEvent>();
 

@@ -146,6 +146,8 @@ export interface BuildToolsOptions {
   allowedTools?: string[];
   /** When provided, expose the `task` tool so the parent can spawn subagents. */
   subagents?: SubagentDef[];
+  /** Parent-only. Lets the agent flip Plan / Build mid-turn. */
+  allowModeSwitch?: boolean;
 }
 
 /**
@@ -319,6 +321,27 @@ export function buildTools(
             subagent_type: z
               .string()
               .describe("Which specialized subagent to use, e.g. 'explore' or 'general'"),
+          }),
+        },
+      ),
+    );
+  }
+
+  if (options.allowModeSwitch) {
+    filtered.push(
+      tool(
+        async () =>
+          "Error: switch_mode is executed by the agent runtime, not as a standalone tool.",
+        {
+          name: "switch_mode",
+          description:
+            "Switch this session between Plan and Build. " +
+            "Plan is read-only: research and write a numbered plan, no file writes or shell. " +
+            "Build can write files and run commands. " +
+            "Call this when the user asks you to plan, or after they accept a plan and want it implemented. " +
+            "Do not switch to Build unless the user asked you to implement or accepted the plan.",
+          schema: z.object({
+            mode: z.enum(["plan", "build"]).describe("The mode to switch to"),
           }),
         },
       ),

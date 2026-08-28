@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Message, PendingApproval, SubagentRun, SubagentStep } from "../types";
 import { MarkdownMessage } from "./Markdown";
 
-function formatToolArgs(args?: Record<string, unknown>): string {
+function formatToolArgs(name: string, args?: Record<string, unknown>): string {
+  if (name === "switch_mode" && typeof args?.mode === "string") return args.mode;
   if (!args || Object.keys(args).length === 0) return "";
   const entries = Object.entries(args);
   if (entries.length === 0) return "";
@@ -13,7 +14,7 @@ function formatToolArgs(args?: Record<string, unknown>): string {
 }
 
 function ToolChip({ name, args }: { name: string; args?: Record<string, unknown> }) {
-  const argsPreview = formatToolArgs(args);
+  const argsPreview = formatToolArgs(name, args);
 
   return (
     <div className="flex w-full items-center gap-1.5 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">

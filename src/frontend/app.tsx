@@ -19,18 +19,39 @@ function appendRunText(run: SubagentRun, text: string): SubagentRun {
 function useAgentPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, Message[]>>({});
   const [files, setFiles] = useState<SessionFile[]>([]);
   const [fileEditor, setFileEditor] = useState<{ path: string; content: string } | null>(null);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [subagents, setSubagents] = useState<SubagentSummary[]>([]);
   const [skillEditor, setSkillEditor] = useState<SkillEditorState>(null);
-  const [busy, setBusy] = useState(false);
+  const [busySessions, setBusySessions] = useState<Set<string>>(() => new Set());
+
+  const activeSessionIdRef = useRef<string | null>(null);
+  const busySessionsRef = useRef<Set<string>>(new Set());
+  const loadSeq = useRef(0);
+  const abortBySession = useRef(new Map<string, AbortController>());
+
+  activeSessionIdRef.current = activeSessionId;
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   );
+  const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
+  const busy = Boolean(activeSessionId && busySessions.has(activeSessionId));
+
+  function setBusySession(id: string, nextBusy: boolean) {
+    const next = new Set(busySessionsRef.current);
+    if (nextBusy) next.add(id);
+    else next.delete(id);
+    busySessionsRef.current = next;
+    setBusySessions(next);
+  }
+
+  function patchSessionMessages(id: string, updater: (prev: Message[]) => Message[]) {
+    setMessagesBySession((prev) => ({ ...prev, [id]: updater(prev[id] ?? []) }));
+  }
 
   async function refreshSessions() {
     const data = await getJson<{ sessions: SessionSummary[] }>("/api/sessions");
@@ -45,21 +66,31 @@ function useAgentPage() {
   }
 
   async function loadSession(id: string) {
-    const data = await getJson<{ session: SessionSummary; messages: Message[] }>(`/api/sessions/${id}`);
+    const seq = ++loadSeq.current;
     setActiveSessionId(id);
-    setMessages(data.messages);
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== id);
-      return [data.session, ...next].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    });
+
+    if (!busySessionsRef.current.has(id)) {
+      const data = await getJson<{ session: SessionSummary; messages: Message[] }>(`/api/sessions/${id}`);
+      if (seq !== loadSeq.current) return;
+      setMessagesBySession((prev) => ({ ...prev, [id]: data.messages }));
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        return [data.session, ...next].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      });
+    } else if (seq !== loadSeq.current) {
+      return;
+    }
+
     await refreshFiles(id);
   }
 
   async function refreshFiles(id: string) {
     try {
       const data = await getJson<{ files: SessionFile[] }>(`/api/sessions/${id}/files`);
+      if (activeSessionIdRef.current !== id) return;
       setFiles(data.files);
     } catch {
+      if (activeSessionIdRef.current !== id) return;
       setFiles([]);
     }
   }
@@ -70,31 +101,46 @@ function useAgentPage() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     });
+    loadSeq.current += 1;
     setSessions((prev) => [data.session, ...prev]);
     setActiveSessionId(data.session.id);
-    setMessages([]);
+    setMessagesBySession((prev) => ({ ...prev, [data.session.id]: [] }));
     setFiles([]);
   }
 
+  function abortSession(id: string) {
+    abortBySession.current.get(id)?.abort();
+    abortBySession.current.delete(id);
+  }
+
   async function deleteSession(id: string) {
+    abortSession(id);
+    setBusySession(id, false);
     await fetch(`/api/sessions/${id}`, { method: "DELETE" });
     const next = sessions.filter((s) => s.id !== id);
     setSessions(next);
+    setMessagesBySession((prev) => {
+      const { [id]: _, ...rest } = prev;
+      return rest;
+    });
     if (activeSessionId === id) {
       if (next[0]) await loadSession(next[0].id);
       else {
+        loadSeq.current += 1;
         setActiveSessionId(null);
-        setMessages([]);
+        setFiles([]);
       }
     }
   }
 
   async function resetSession() {
     if (!activeSessionId) return;
+    abortSession(activeSessionId);
+    setBusySession(activeSessionId, false);
     const data = await getJson<{ session: SessionSummary }>(`/api/sessions/${activeSessionId}/reset`, {
       method: "POST",
     });
-    setMessages([]);
+    setMessagesBySession((prev) => ({ ...prev, [activeSessionId]: [] }));
     setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? data.session : s)));
   }
 
@@ -214,25 +260,31 @@ function useAgentPage() {
         body: JSON.stringify({}),
       });
       sessionId = data.session.id;
+      loadSeq.current += 1;
       setActiveSessionId(sessionId);
       setSessions((prev) => [data.session, ...prev]);
+      setMessagesBySession((prev) => ({ ...prev, [sessionId!]: [] }));
     }
 
     const assistantId = crypto.randomUUID();
-    setMessages((prev) => [
+    patchSessionMessages(sessionId, (prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", text, tools: [], completed: true },
       { id: assistantId, role: "assistant", text: "", tools: [], toolDetails: [], skills: [], subagents: [], completed: false },
     ]);
     const patch = (fn: (m: Message) => Message) =>
-      setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
+      patchSessionMessages(sessionId, (prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
 
-    setBusy(true);
+    abortSession(sessionId);
+    const ac = new AbortController();
+    abortBySession.current.set(sessionId, ac);
+    setBusySession(sessionId, true);
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId, message: text }),
+        signal: ac.signal,
       });
       if (!res.body) throw new Error("No response body");
 
@@ -293,19 +345,25 @@ function useAgentPage() {
             ...m,
             pendingApprovals: (m.pendingApprovals ?? []).filter((a) => a.id !== event.id),
           }));
+          else if (event.type === "mode") {
+            const nextMode = event.mode;
+            setSessions((prev) =>
+              prev.map((s) => (s.id === sessionId ? { ...s, mode: nextMode } : s)),
+            );
+          }
           else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
           else if (event.type === "timeout") patch((m) => ({ ...m, error: event.message, timeout: true, completed: true }));
           else if (event.type === "error") patch((m) => ({ ...m, error: event.message, completed: true }));
         }
       }
-      const latest = await refreshSessions();
-      const current = latest.find((s) => s.id === sessionId);
-      if (current) setActiveSessionId(current.id);
+      await refreshSessions();
     } catch (err) {
+      if ((err as Error).name === "AbortError") return;
       patch((m) => ({ ...m, error: (err as Error).message, completed: true }));
     } finally {
-      setBusy(false);
-      if (sessionId) await refreshFiles(sessionId);
+      if (abortBySession.current.get(sessionId) === ac) abortBySession.current.delete(sessionId);
+      setBusySession(sessionId, false);
+      if (activeSessionIdRef.current === sessionId) await refreshFiles(sessionId);
     }
   }
 
@@ -337,6 +395,7 @@ function useAgentPage() {
     subagents,
     skillEditor,
     busy,
+    busySessions,
     send,
     loadSession,
     createSession,
@@ -373,6 +432,7 @@ function App() {
       <Sidebar
         sessions={state.sessions}
         activeSessionId={state.activeSessionId}
+        busySessionIds={state.busySessions}
         files={state.files}
         skills={state.skills}
         subagents={state.subagents}

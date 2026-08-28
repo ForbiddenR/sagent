@@ -84,6 +84,7 @@ export type AgentEvent =
   | { type: "subagent_done"; id: string; name: string; text: string }
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
+  | { type: "mode"; mode: SessionMode }
   | { type: "done"; text: string }
   | { type: "timeout"; message: string }
   | { type: "error"; message: string };

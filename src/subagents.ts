@@ -16,7 +16,7 @@ export interface SubagentDef {
 
 export const WRITE_TOOLS = ["write_file", "run_bash"] as const;
 
-/** Parent tools in plan mode — reads, search, and `task` (added separately). */
+/** Parent tools in plan mode — reads, search, `switch_mode`, and `task` (added separately). */
 export const PLAN_PARENT_TOOLS = [
   "calculator",
   "current_time",
@@ -25,6 +25,7 @@ export const PLAN_PARENT_TOOLS = [
   "web_search_exa",
   "web_fetch_exa",
   "load_skill",
+  "switch_mode",
 ];
 
 export function isReadOnlySubagent(def: SubagentDef): boolean {
