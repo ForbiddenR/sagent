@@ -6,6 +6,7 @@ export interface PendingApproval {
 
 export type SubagentStep =
   | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string };
 
@@ -18,6 +19,7 @@ export interface SubagentRun {
   skills: string[];
   steps?: SubagentStep[];
   text?: string;
+  thinking?: string;
   done?: boolean;
 }
 
@@ -25,6 +27,7 @@ export interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
+  thinking?: string;
   tools: string[];
   toolDetails?: Record<string, unknown>[];
   skills?: string[];
@@ -40,9 +43,12 @@ export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 export const THINKING_LEVELS: ThinkingLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
+export type TitleSource = "default" | "auto" | "user";
+
 export interface SessionSummary {
   id: string;
   title: string;
+  titleSource?: TitleSource;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
@@ -98,16 +104,19 @@ export interface SubagentSummary {
 
 export type AgentEvent =
   | { type: "token"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
   | { type: "subagent_start"; id: string; name: string; description?: string; prompt?: string }
   | { type: "subagent_token"; id: string; text: string }
+  | { type: "subagent_thinking"; id: string; text: string }
   | { type: "subagent_tool"; id: string; name: string; args?: Record<string, unknown> }
   | { type: "subagent_skill"; id: string; name: string }
   | { type: "subagent_done"; id: string; name: string; text: string }
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
   | { type: "mode"; mode: SessionMode }
+  | { type: "title"; title: string }
   | { type: "done"; text: string }
   | { type: "timeout"; message: string }
   | { type: "error"; message: string };

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Composer } from "./components/Composer";
 import { FileEditor } from "./components/FileEditor";
+import { FileExplorer } from "./components/FileExplorer";
 import { Bubble, EmptyState } from "./components/Message";
 import { Sidebar } from "./components/Sidebar";
 import { SkillEditor } from "./components/SkillEditor";
@@ -15,6 +16,14 @@ function appendRunText(run: SubagentRun, text: string): SubagentRun {
   if (last?.type === "text") steps[steps.length - 1] = { type: "text", text: last.text + text };
   else steps.push({ type: "text", text });
   return { ...run, text: (run.text ?? "") + text, steps };
+}
+
+function appendRunThinking(run: SubagentRun, text: string): SubagentRun {
+  const steps: SubagentStep[] = [...(run.steps ?? [])];
+  const last = steps.at(-1);
+  if (last?.type === "thinking") steps[steps.length - 1] = { type: "thinking", text: last.text + text };
+  else steps.push({ type: "thinking", text });
+  return { ...run, thinking: (run.thinking ?? "") + text, steps };
 }
 
 function useAgentPage() {
@@ -34,6 +43,7 @@ function useAgentPage() {
   const [marketError, setMarketError] = useState<string | null>(null);
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
   const [marketOpen, setMarketOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
 
   const activeSessionIdRef = useRef<string | null>(null);
   const busySessionsRef = useRef<Set<string>>(new Set());
@@ -214,6 +224,15 @@ function useAgentPage() {
     setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? data.session : s)));
   }
 
+  async function renameSession(id: string, title: string) {
+    const data = await getJson<{ session: SessionSummary }>(`/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    setSessions((prev) => prev.map((s) => (s.id === id ? data.session : s)));
+  }
+
   async function setMode(mode: SessionMode) {
     if (!activeSessionId) return;
     const data = await getJson<{ session: SessionSummary; mode: SessionMode }>(
@@ -340,7 +359,7 @@ function useAgentPage() {
     patchSessionMessages(sessionId, (prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", text, tools: [], completed: true },
-      { id: assistantId, role: "assistant", text: "", tools: [], toolDetails: [], skills: [], subagents: [], completed: false },
+      { id: assistantId, role: "assistant", text: "", thinking: "", tools: [], toolDetails: [], skills: [], subagents: [], completed: false },
     ]);
     const patch = (fn: (m: Message) => Message) =>
       patchSessionMessages(sessionId, (prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
@@ -372,6 +391,7 @@ function useAgentPage() {
           if (!line.startsWith("data:")) continue;
           const event = JSON.parse(line.slice(5).trim()) as AgentEvent;
           if (event.type === "token") patch((m) => ({ ...m, text: m.text + event.text }));
+          else if (event.type === "thinking") patch((m) => ({ ...m, thinking: (m.thinking ?? "") + event.text }));
           else if (event.type === "tool") patch((m) => ({ ...m, tools: [...m.tools, event.name], toolDetails: [...(m.toolDetails ?? []), { name: event.name, args: event.args }] }));
           else if (event.type === "skill") patch((m) => ({ ...m, skills: [...(m.skills ?? []), event.name] }));
           else if (event.type === "subagent_start") patch((m) => ({
@@ -390,6 +410,10 @@ function useAgentPage() {
           else if (event.type === "subagent_token") patch((m) => ({
             ...m,
             subagents: (m.subagents ?? []).map((s) => s.id === event.id ? appendRunText(s, event.text) : s),
+          }));
+          else if (event.type === "subagent_thinking") patch((m) => ({
+            ...m,
+            subagents: (m.subagents ?? []).map((s) => s.id === event.id ? appendRunThinking(s, event.text) : s),
           }));
           else if (event.type === "subagent_tool") patch((m) => ({
             ...m,
@@ -419,6 +443,12 @@ function useAgentPage() {
             const nextMode = event.mode;
             setSessions((prev) =>
               prev.map((s) => (s.id === sessionId ? { ...s, mode: nextMode } : s)),
+            );
+          }
+          else if (event.type === "title") {
+            const nextTitle = event.title;
+            setSessions((prev) =>
+              prev.map((s) => (s.id === sessionId ? { ...s, title: nextTitle, titleSource: "auto" } : s)),
             );
           }
           else if (event.type === "done") patch((m) => ({ ...m, text: event.text || m.text, completed: true }));
@@ -475,8 +505,11 @@ function useAgentPage() {
     marketError,
     installingSkill,
     marketOpen,
+    filesOpen,
     openMarket: () => setMarketOpen(true),
     closeMarket: () => setMarketOpen(false),
+    openFiles: () => setFilesOpen(true),
+    closeFiles: () => setFilesOpen(false),
     addMarketplace,
     loadMarketplace,
     removeMarketplace,
@@ -486,6 +519,7 @@ function useAgentPage() {
     createSession,
     deleteSession,
     resetSession,
+    renameSession,
     setMode,
     setThinking,
     toggleSkill,
@@ -518,15 +552,13 @@ function App() {
         sessions={state.sessions}
         activeSessionId={state.activeSessionId}
         busySessionIds={state.busySessions}
-        files={state.files}
         skills={state.skills}
         subagents={state.subagents}
         activeSkills={activeSkills}
         onLoadSession={state.loadSession}
         onCreateSession={state.createSession}
         onDeleteSession={state.deleteSession}
-        onUploadFile={state.uploadFile}
-        onOpenFileEditor={state.openFileEditor}
+        onRenameSession={state.renameSession}
         onToggleSkill={state.toggleSkill}
         onOpenCreateSkill={state.openCreateSkill}
         onOpenEditSkill={state.openEditSkill}
@@ -545,6 +577,7 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={state.openFiles} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80">Files</button>
               <button onClick={state.openMarket} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80 md:hidden">Market</button>
               <button onClick={state.openCreateSkill} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80 md:hidden">Add skill</button>
               <button onClick={state.resetSession} className="chip rounded-lg border px-3 py-1.5 text-xs font-medium hover:opacity-80">Clear messages</button>
@@ -581,6 +614,13 @@ function App() {
         onSelect={state.loadMarketplace}
         onRemove={state.removeMarketplace}
         onInstall={state.installMarketSkill}
+      />
+      <FileExplorer
+        open={state.filesOpen}
+        files={state.files}
+        onClose={state.closeFiles}
+        onUpload={state.uploadFile}
+        onOpenFile={state.openFileEditor}
       />
       <FileEditor editor={state.fileEditor} onClose={state.closeFileEditor} onSave={state.saveFile} />
     </div>

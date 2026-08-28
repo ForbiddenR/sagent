@@ -117,16 +117,19 @@ export type ApprovalRequestFn = (request: ApprovalRequest) => Promise<boolean>;
 /** Events streamed out of the agent as it works. */
 export type AgentEvent =
   | { type: "token"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string }
   | { type: "subagent_start"; id: string; name: string; description?: string; prompt?: string }
   | { type: "subagent_token"; id: string; text: string }
+  | { type: "subagent_thinking"; id: string; text: string }
   | { type: "subagent_tool"; id: string; name: string; args?: Record<string, unknown> }
   | { type: "subagent_skill"; id: string; name: string }
   | { type: "subagent_done"; id: string; name: string; text: string }
   | { type: "approval_request"; id: string; name: "run_bash"; args?: Record<string, unknown> }
   | { type: "approval_result"; id: string; approved: boolean }
   | { type: "mode"; mode: SessionMode }
+  | { type: "title"; title: string }
   | { type: "done"; text: string }
   | { type: "timeout"; message: string }
   | { type: "error"; message: string };
@@ -186,6 +189,25 @@ function extractText(content: MessageContent): string {
       .join("");
   }
   return "";
+}
+
+function thinkingFromRaw(block: unknown): string {
+  if (!block || typeof block !== "object") return "";
+  const b = block as { type?: unknown; thinking?: unknown; reasoning?: unknown; text?: unknown };
+  if (b.type !== "thinking" && b.type !== "reasoning") return "";
+  if (typeof b.thinking === "string") return b.thinking;
+  if (typeof b.reasoning === "string") return b.reasoning;
+  if (typeof b.text === "string") return b.text;
+  return "";
+}
+
+/** Thinking/reasoning deltas — never mixed into the visible answer. */
+function extractThinking(chunk: AIMessageChunk): string {
+  const fromBlocks = (chunk.contentBlocks ?? [])
+    .map((block) => (block.type === "reasoning" && typeof block.reasoning === "string" ? block.reasoning : ""))
+    .join("");
+  if (fromBlocks) return fromBlocks;
+  return Array.isArray(chunk.content) ? chunk.content.map(thinkingFromRaw).join("") : "";
 }
 
 function asArgs(raw: unknown): Record<string, unknown> {
@@ -502,6 +524,11 @@ export function createAgent(
         () => controller.abort(),
       )) {
         gathered = gathered === undefined ? chunk : gathered.concat(chunk);
+        const thinking = extractThinking(chunk);
+        if (thinking) {
+          if (ctx.subagent) ctx.events.push({ type: "subagent_thinking", id: ctx.subagent.id, text: thinking });
+          else ctx.events.push({ type: "thinking", text: thinking });
+        }
         const text = extractText(chunk.content);
         if (text) {
           if (ctx.subagent) ctx.events.push({ type: "subagent_token", id: ctx.subagent.id, text });

@@ -1,3 +1,4 @@
+import { readdir, stat as fsStat } from "node:fs/promises";
 import index from "./frontend/index.html";
 import { createAgent, hasAnthropicAuth, type Agent, type ApprovalRequest } from "./agent.ts";
 import { deleteSkill, loadSkills, saveSkill, type Skill, type SkillInput } from "./skills.ts";
@@ -9,7 +10,8 @@ import {
   listMarketplaces,
   removeMarketplace,
 } from "./marketplace.ts";
-import { appendSubagentText, memory, type ClientMessage } from "./memory.ts";
+import { appendSubagentText, appendSubagentThinking, memory, type ClientMessage } from "./memory.ts";
+import { generateSessionTitle } from "./title.ts";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DEV = process.env.NODE_ENV !== "production";
@@ -112,6 +114,51 @@ function safeUploadFileName(name: string): string {
   return fileName;
 }
 
+interface WorkspaceEntry {
+  name: string;
+  size: number;
+  modified: string;
+  isDir: boolean;
+}
+
+async function listSessionFiles(sessionId: string): Promise<WorkspaceEntry[]> {
+  const root = safeSessionWorkspace(sessionId);
+  const files: WorkspaceEntry[] = [];
+
+  async function walk(rel: string) {
+    const dir = rel ? `${root}/${rel}` : root;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === "." || entry.name === "..") continue;
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      try {
+        const info = await fsStat(`${dir}/${entry.name}`);
+        files.push({
+          name: path,
+          size: info.isDirectory() ? 0 : info.size,
+          modified: info.mtime.toISOString(),
+          isDir: info.isDirectory(),
+        });
+        if (info.isDirectory()) await walk(path);
+      } catch {
+        // skip unreadable entries
+      }
+    }
+  }
+
+  await walk("");
+  files.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return files;
+}
+
 const server = Bun.serve({
   port: PORT,
   idleTimeout: 255,
@@ -138,6 +185,16 @@ const server = Bun.serve({
         const session = memory.getSession(id);
         if (!session) return json({ error: "Session not found" }, 404);
         return json({ session, messages: memory.getClientMessages(id) });
+      },
+      async PATCH(req) {
+        const id = req.params.id;
+        if (!memory.getSession(id)) return json({ error: "Session not found" }, 404);
+        const body = (await req.json().catch(() => ({}))) as { title?: string };
+        if (typeof body.title !== "string" || !body.title.trim()) {
+          return json({ error: "title is required" }, 400);
+        }
+        const session = memory.setTitle(id, body.title, "user");
+        return json({ session });
       },
       DELETE(req) {
         const deleted = memory.deleteSession(req.params.id);
@@ -225,21 +282,7 @@ const server = Bun.serve({
       async GET(req) {
         const id = req.params.id;
         try {
-          const sessionWorkspace = safeSessionWorkspace(id);
-          const files: { name: string; size: number; modified: string; isDir: boolean }[] = [];
-          const glob = new Bun.Glob("**/*");
-          for await (const path of glob.scan({ cwd: sessionWorkspace })) {
-            const fullPath = safeWorkspacePath(id, path);
-            const file = Bun.file(fullPath);
-            const stat = await file.stat();
-            files.push({
-              name: path,
-              size: file.size,
-              modified: new Date(stat.mtime).toISOString(),
-              isDir: stat.isDirectory(),
-            });
-          }
-          return json({ files });
+          return json({ files: await listSessionFiles(id) });
         } catch {
           return json({ files: [] });
         }
@@ -441,6 +484,7 @@ const server = Bun.serve({
               id: crypto.randomUUID(),
               role: "assistant",
               text: "",
+              thinking: "",
               tools: [],
               toolDetails: [],
               skills: [],
@@ -451,10 +495,22 @@ const server = Bun.serve({
               enqueue(enc.encode(`data: ${JSON.stringify(event)}\n\n`));
 
             const run = (async () => {
+            const titleTask = memory.needsAutoTitle(sessionId)
+              ? generateSessionTitle(message)
+                  .then((title) => {
+                    const session = memory.setTitle(sessionId, title, "auto");
+                    if (session && !closed) send({ type: "title", title: session.title });
+                  })
+                  .catch((err) => {
+                    console.warn(`⚠️  Session title generation failed: ${(err as Error).message}`);
+                  })
+              : Promise.resolve();
+
             try {
               for await (const event of agent.run(sessionId, message)) {
                 if (closed || req.signal.aborted) break;
                 if (event.type === "token") assistantMessage.text += event.text;
+                else if (event.type === "thinking") assistantMessage.thinking = (assistantMessage.thinking ?? "") + event.text;
                 else if (event.type === "tool") {
                   assistantMessage.tools.push(event.name);
                   assistantMessage.toolDetails?.push({ name: event.name, args: event.args });
@@ -474,6 +530,9 @@ const server = Bun.serve({
                 } else if (event.type === "subagent_token") {
                   const run = assistantMessage.subagents?.find((s) => s.id === event.id);
                   if (run) appendSubagentText(run, event.text);
+                } else if (event.type === "subagent_thinking") {
+                  const run = assistantMessage.subagents?.find((s) => s.id === event.id);
+                  if (run) appendSubagentThinking(run, event.text);
                 } else if (event.type === "subagent_tool") {
                   const run = assistantMessage.subagents?.find((s) => s.id === event.id);
                   if (run) {
@@ -510,6 +569,7 @@ const server = Bun.serve({
                 send({ type: "error", message });
               }
             } finally {
+              await titleTask;
               if (!assistantMessage.completed && !assistantMessage.error) {
                 assistantMessage.completed = true;
               }

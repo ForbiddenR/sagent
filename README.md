@@ -19,9 +19,11 @@ demonstrates a few things in a minimal, readable way:
   Switch to Build to implement the plan. The conversation stays in the same session.
 - **Thinking level** — Claude adaptive thinking (`output_config.effort`). Toggle
   Low / Med / High / xHigh / Max on the input bar. Higher effort thinks more
-  before answering (slower, better on hard tasks). Default is High.
+  before answering (slower, better on hard tasks). Default is High. The model's
+  thinking stream shows as a collapsible **Thought** block above the reply.
 - **Memory** — conversation history per session id, **persisted to `.sessions.json`**
-  so sessions survive server restarts.
+  so sessions survive server restarts. The first prompt mints a short **session title**
+  in the background (Haiku-class, no tools); double-click a row to rename it.
 - **Agent loop** — a LangGraph `StateGraph` (`model` → `tools` → `model` …) with
   streaming tokens, a tool-round cap, and an abort-on-stall timeout that notifies
   the user when the API is unresponsive.
@@ -29,8 +31,8 @@ demonstrates a few things in a minimal, readable way:
   (with human-in-the-loop approval), `search_workspace` (semantic, RAG-backed),
   `web_search_exa` / `web_fetch_exa` (Exa web search and page fetch),
   `load_skill`, `task`, and `switch_mode` (Plan ↔ Build).
-- **Workspace** — each session gets a private folder for files; upload, browse,
-  and edit them from the UI.
+- **Workspace** — each session gets a private folder for files. Open **Files**
+  for a small window with the folder tree; click a file to preview and edit it.
 
 A single-page chat UI (**React 19**, bundled natively by Bun — no Vite/webpack)
 streams responses over Server-Sent Events. Styling is Tailwind via CDN with
@@ -79,11 +81,13 @@ Open http://localhost:3000.
   `skills/` and is enabled for every session.
 - **Files & bash**: ask the agent to create or read a file in its workspace, or to run
   a shell command → `run_bash` requests approval first via an inline card; approve to
-  run it. Browse/edit uploaded files from the file panel.
+  run it. Open **Files** in the header to browse the workspace tree and edit a file.
 - **Semantic search**: with files in the workspace, ask something like “search the
   workspace for notes about caching” → `search_workspace` finds relevant chunks.
 - **Sessions**: use the sidebar to create, choose, reset, and delete independent
-  sessions. Each session has its own memory and enabled-skill set.
+  sessions. Each session has its own memory and enabled-skill set. The first
+  prompt auto-titles the row (e.g. “Auth refresh token support”); double-click
+  to rename — a manual name is never overwritten.
 - **Memory**: ask a follow-up like “what did I just ask?” → prior turns in the
   selected session are remembered.
 - **Subagents**: ask “use explore to search the web for LangGraph 1.x, then
@@ -93,7 +97,8 @@ Open http://localhost:3000.
   file”) → the agent may call `switch_mode`. The reply is a numbered plan; writes
   stay blocked until you (or the agent, after you accept) switch to **Build**.
 - **Thinking**: set Low / Med / High / xHigh / Max on the input bar. High is the
-  default; Max spends the most time reasoning.
+  default; Max spends the most time reasoning. A **Thought** block streams above
+  the answer so you can tell thinking apart from the reply.
 - **Timeouts**: if the model stops responding, the request is aborted after
   `MODEL_TIMEOUT_MS` and a “⏱ Request timed out — check the API” notice appears.
 - Restart the server → sessions and history are restored from `.sessions.json`.
@@ -106,6 +111,7 @@ src/
                      /api/skills, /api/marketplaces, /api/subagents, /api/approvals, session mode/thinking, files & upload endpoints
   agent.ts           LangGraph StateGraph (model/tools nodes) + streaming + timeout
   memory.ts          SessionStore — sessions, enabled skills, messages (persisted)
+  title.ts           cheap Haiku title from the first user prompt
   rag.ts             in-memory vector store backing search_workspace
   skills.ts          load SKILL.md folders (Bun.Glob), build the skill index
   marketplace.ts     third-party skill sources (GitHub / git / marketplace.json)
@@ -190,6 +196,8 @@ All options are read from the environment (Bun auto-loads `.env`). See `.env.exa
 | `ANTHROPIC_API_KEY`   | —                    | Console API key from https://console.anthropic.com/. Required unless `ANTHROPIC_AUTH_TOKEN` is set. |
 | `ANTHROPIC_AUTH_TOKEN`| —                    | Bearer token (Claude Code / OAuth / some gateways). Used if `ANTHROPIC_API_KEY` is unset. |
 | `MODEL`               | `claude-opus-4-8`    | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
+| `TITLE_MODEL`         | `claude-haiku-4-5`   | Cheap model used only to generate a session title from the first prompt. No tools, no thinking. |
+| `TITLE_TIMEOUT_MS`    | `8000`               | Max ms to wait for a title; falls back to a truncated first message. |
 | `ANTHROPIC_BASE_URL`  | Anthropic API        | Optional. Point at an Anthropic-compatible endpoint (gateway/proxy, e.g. LiteLLM, Cloudflare AI Gateway, a corporate proxy). Must speak the Anthropic `/v1/messages` API. Leave unset for the default. |
 | `EXA_API_KEY`         | —                    | Optional. Higher rate limits for `web_search_exa` / `web_fetch_exa`. Without it, tools use Exa's hosted MCP at https://mcp.exa.ai/mcp (free, rate-limited). |
 | `MODEL_TIMEOUT_MS`    | `60000`              | Max ms to wait for the next model chunk before treating the request as timed out (a streaming response is not interrupted; only total silence trips it). Emits a timeout notification so the user knows to check the API. |

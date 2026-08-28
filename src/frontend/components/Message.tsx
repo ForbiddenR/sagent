@@ -43,12 +43,81 @@ function SkillChip({ name }: { name: string }) {
 function fallbackSteps(run: SubagentRun): SubagentStep[] {
   if ((run.steps ?? []).length > 0) return run.steps!;
   const steps: SubagentStep[] = [];
+  if (run.thinking) steps.push({ type: "thinking", text: run.thinking });
   for (const name of run.skills) steps.push({ type: "skill", name });
   for (const detail of run.tools) {
     steps.push({ type: "tool", name: String(detail.name ?? "tool"), args: detail.args as Record<string, unknown> | undefined });
   }
   if (run.text) steps.push({ type: "text", text: run.text });
   return steps;
+}
+
+function ThinkingDots() {
+  return (
+    <span className="inline-flex items-end gap-[3px]" aria-hidden>
+      <span className="think-dot h-1 w-1 rounded-full bg-current" />
+      <span className="think-dot h-1 w-1 rounded-full bg-current" />
+      <span className="think-dot h-1 w-1 rounded-full bg-current" />
+    </span>
+  );
+}
+
+function ThinkingSpinner() {
+  return (
+    <svg viewBox="0 0 16 16" className="think-spin h-3.5 w-3.5 text-amber-500" fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+      <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(live);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const liveRef = useRef(live);
+
+  useEffect(() => {
+    if (live && !liveRef.current) setOpen(true);
+    if (!live && liveRef.current) setOpen(false);
+    liveRef.current = live;
+  }, [live]);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el && open) el.scrollTop = el.scrollHeight;
+  }, [open, text]);
+
+  if (!text && !live) return null;
+
+  return (
+    <div className={`flex w-full max-w-[85%] flex-col gap-1.5 rounded-md border px-2.5 py-2 text-xs ${
+      live
+        ? "think-live border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+        : "border-amber-200 bg-amber-50/80 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+    }`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 text-left font-medium"
+      >
+        <span className="w-3 shrink-0 text-[10px] text-amber-600 dark:text-amber-400">{open ? "▼" : "▶"}</span>
+        {live ? <ThinkingSpinner /> : <span className="text-[10px]">💭</span>}
+        <span>{live ? "Thinking" : "Thought"}</span>
+        {live && <ThinkingDots />}
+        <span className={`ml-auto shrink-0 text-[10px] uppercase tracking-wide ${live ? "" : "muted"}`}>
+          {live ? "live" : "done"}
+        </span>
+      </button>
+      {open && (
+        <div
+          ref={bodyRef}
+          className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded bg-black/5 px-2 py-1.5 text-[11px] leading-relaxed italic text-amber-900/90 dark:bg-white/5 dark:text-amber-100/80"
+        >
+          {text || <span className="not-italic opacity-70">Waiting for thoughts<ThinkingDots /></span>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SubagentCard({ run }: { run: SubagentRun }) {
@@ -89,6 +158,14 @@ function SubagentCard({ run }: { run: SubagentRun }) {
             {steps.map((step, i) => {
               if (step.type === "skill") return <SkillChip key={`step-${i}`} name={step.name} />;
               if (step.type === "tool") return <ToolChip key={`step-${i}`} name={step.name} args={step.args} />;
+              if (step.type === "thinking") {
+                return (
+                  <div key={`step-${i}`} className="whitespace-pre-wrap rounded border border-amber-200/70 bg-amber-50/70 px-2 py-1 text-[11px] italic leading-relaxed text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                    <div className="mb-0.5 text-[10px] font-medium not-italic uppercase tracking-wide opacity-70">Thought</div>
+                    {step.text}
+                  </div>
+                );
+              }
               return (
                 <div key={`step-${i}`} className="whitespace-pre-wrap rounded bg-black/5 px-2 py-1 text-[11px] leading-relaxed dark:bg-white/10">
                   {step.text}
@@ -96,7 +173,11 @@ function SubagentCard({ run }: { run: SubagentRun }) {
               );
             })}
             {!run.done && steps.length === 0 && (
-              <div className="muted animate-pulse px-1 text-[11px]">thinking...</div>
+              <div className="flex items-center gap-1.5 px-1 text-[11px] text-violet-700 dark:text-violet-200">
+                <ThinkingSpinner />
+                <span>thinking</span>
+                <ThinkingDots />
+              </div>
             )}
           </div>
         </>
@@ -142,6 +223,17 @@ export function Bubble({ message, onApprove }: BubbleProps) {
   }
   return (
     <div className="flex flex-col items-start gap-2">
+      {(() => {
+        const hasActivity = ((message.skills ?? []).length > 0 || (message.toolDetails ?? []).length > 0 || (message.subagents ?? []).length > 0);
+        const showThinking = Boolean(message.thinking) || (!message.completed && !message.text && !hasActivity);
+        if (!showThinking) return null;
+        return (
+          <ThinkingBlock
+            text={message.thinking ?? ""}
+            live={!message.completed && !message.error && !message.timeout && !message.text && !hasActivity}
+          />
+        );
+      })()}
       {((message.skills ?? []).length > 0 || (message.toolDetails ?? []).length > 0 || (message.subagents ?? []).length > 0) && (
         <div className="flex max-w-[85%] flex-col gap-1.5">
           {(message.skills ?? []).map((name, i) => <SkillChip key={`skill-${i}`} name={name} />)}
@@ -152,11 +244,10 @@ export function Bubble({ message, onApprove }: BubbleProps) {
       {(message.pendingApprovals ?? []).map((approval) => (
         <ApprovalCard key={approval.id} approval={approval} onApprove={onApprove} />
       ))}
-      {(message.text || (!message.completed && (message.subagents ?? []).length === 0)) && (
+      {message.text && (
         <div className="bubble-assistant max-w-[85%] rounded-xl2 px-4 py-2.5 text-sm leading-relaxed">
-          {message.text && <MarkdownMessage text={message.text} />}
+          <MarkdownMessage text={message.text} />
           {message.completed && !message.error && !message.timeout && <div className="muted mt-2 text-xs">response completed ✓</div>}
-          {!message.completed && !message.error && !message.timeout && <div className="muted mt-2 text-xs animate-pulse">thinking...</div>}
         </div>
       )}
       {message.error && !message.timeout && <div className="max-w-[85%] rounded-xl2 border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">Error: {message.error}</div>}

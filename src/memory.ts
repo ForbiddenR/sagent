@@ -5,6 +5,7 @@ const MAX_MODEL_MESSAGES = Number(process.env.MAX_MODEL_MESSAGES || "100");
 
 export type SubagentStep =
   | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "tool"; name: string; args?: Record<string, unknown> }
   | { type: "skill"; name: string };
 
@@ -17,6 +18,7 @@ export interface SubagentRun {
   skills: string[];
   steps?: SubagentStep[];
   text?: string;
+  thinking?: string;
   done?: boolean;
 }
 
@@ -24,6 +26,7 @@ export interface ClientMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  thinking?: string;
   tools: string[];
   toolDetails?: Record<string, unknown>[];
   skills?: string[];
@@ -38,9 +41,12 @@ export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 export const THINKING_LEVELS: ThinkingLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
+export type TitleSource = "default" | "auto" | "user";
+
 export interface SessionSummary {
   id: string;
   title: string;
+  titleSource: TitleSource;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
@@ -60,6 +66,7 @@ export function normalizeThinking(level: unknown): ThinkingLevel {
 interface SessionRecord {
   id: string;
   title: string;
+  titleSource: TitleSource;
   createdAt: string;
   updatedAt: string;
   history: BaseMessage[];
@@ -72,6 +79,7 @@ interface SessionRecord {
 interface PersistedSessionRecord {
   id: string;
   title: string;
+  titleSource?: TitleSource;
   createdAt: string;
   updatedAt: string;
   clientMessages: ClientMessage[];
@@ -84,14 +92,13 @@ interface PersistedSessionStore {
   sessions: PersistedSessionRecord[];
 }
 
-function defaultTitle() {
-  return `Session ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+export function defaultTitle() {
+  const stamp = new Date().toISOString().replace("T", " ").slice(0, 16);
+  return `New session - ${stamp}`;
 }
 
-function titleFromMessage(message: string) {
-  const cleaned = message.replace(/\s+/g, " ").trim();
-  if (!cleaned) return defaultTitle();
-  return cleaned.length > 36 ? `${cleaned.slice(0, 36)}…` : cleaned;
+function normalizeTitleSource(source: unknown): TitleSource {
+  return source === "auto" || source === "user" || source === "default" ? source : "default";
 }
 
 function normalizeClientMessage(message: ClientMessage): ClientMessage {
@@ -118,6 +125,14 @@ export function appendSubagentText(run: SubagentRun, text: string) {
   else steps.push({ type: "text", text });
 }
 
+export function appendSubagentThinking(run: SubagentRun, text: string) {
+  run.thinking = (run.thinking ?? "") + text;
+  const steps = run.steps ?? (run.steps = []);
+  const last = steps.at(-1);
+  if (last?.type === "thinking") last.text += text;
+  else steps.push({ type: "thinking", text });
+}
+
 /**
  * Simple persisted conversation/session store.
  *
@@ -140,12 +155,14 @@ class SessionStore {
     return store;
   }
 
-  createSession(title = defaultTitle(), allSkillNames: string[] = []): SessionSummary {
+  createSession(title?: string, allSkillNames: string[] = []): SessionSummary {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
+    const custom = title?.trim();
     const record: SessionRecord = {
       id,
-      title,
+      title: custom || defaultTitle(),
+      titleSource: custom ? "user" : "default",
       createdAt: now,
       updatedAt: now,
       history: [],
@@ -166,6 +183,7 @@ class SessionStore {
       record = {
         id: sessionId,
         title: defaultTitle(),
+        titleSource: "default",
         createdAt: now,
         updatedAt: now,
         history: [],
@@ -220,11 +238,28 @@ class SessionStore {
     const record = this.ensureSession(sessionId);
     const normalized = normalizeClientMessage(message);
     record.clientMessages.push(normalized);
-    if (normalized.role === "user" && record.clientMessages.filter((m) => m.role === "user").length === 1) {
-      record.title = titleFromMessage(normalized.text);
-    }
     record.updatedAt = new Date().toISOString();
     this.persistSoon();
+  }
+
+  /** First user turn that still has a placeholder title (not user-renamed). */
+  needsAutoTitle(sessionId: string): boolean {
+    const record = this.sessions.get(sessionId);
+    if (!record || record.titleSource === "user") return false;
+    return record.clientMessages.filter((m) => m.role === "user").length === 1;
+  }
+
+  setTitle(sessionId: string, title: string, source: TitleSource): SessionSummary | undefined {
+    const record = this.sessions.get(sessionId);
+    if (!record) return undefined;
+    if (record.titleSource === "user" && source !== "user") return this.toSummary(record);
+    const cleaned = title.replace(/\s+/g, " ").trim();
+    if (!cleaned) return this.toSummary(record);
+    record.title = cleaned;
+    record.titleSource = source;
+    record.updatedAt = new Date().toISOString();
+    this.persistSoon();
+    return this.toSummary(record);
   }
 
   /** Forget messages in a session while keeping its title and active skills. */
@@ -306,6 +341,7 @@ class SessionStore {
         this.sessions.set(session.id, {
           id: session.id,
           title: session.title || defaultTitle(),
+          titleSource: normalizeTitleSource(session.titleSource),
           createdAt: session.createdAt || new Date().toISOString(),
           updatedAt: session.updatedAt || new Date().toISOString(),
           history,
@@ -331,6 +367,7 @@ class SessionStore {
       sessions: [...this.sessions.values()].map((record) => ({
         id: record.id,
         title: record.title,
+        titleSource: record.titleSource,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         clientMessages: record.clientMessages,
@@ -347,6 +384,7 @@ class SessionStore {
     return {
       id: record.id,
       title: record.title,
+      titleSource: record.titleSource,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       messageCount: record.clientMessages.length,
