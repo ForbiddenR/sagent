@@ -11,7 +11,7 @@ import {
 } from "@langchain/core/messages";
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { StructuredToolInterface } from "@langchain/core/tools";
-import { memory, type SessionMode } from "./memory.ts";
+import { memory, type SessionMode, type ThinkingLevel } from "./memory.ts";
 import { buildTools } from "./tools.ts";
 import { renderSkillIndex, type Skill } from "./skills.ts";
 import {
@@ -25,7 +25,6 @@ import {
 const MODEL = process.env.MODEL || "claude-opus-4-8";
 const MAX_TOOL_ROUNDS = 6;
 const MAX_SUBAGENT_ROUNDS = 8;
-const TOP_P = Number(process.env.TOP_P ?? "1");
 // Max ms to wait for the next chunk from the model before treating the request
 // as stalled/timed out. A long generation that keeps streaming is fine; only a
 // complete silence for this long trips the timeout.
@@ -221,6 +220,7 @@ interface LoopContext {
   events: EventQueue<AgentEvent>;
   maxRounds: number;
   mode: SessionMode;
+  thinking: ThinkingLevel;
   subagent?: { id: string; name: string };
 }
 
@@ -231,7 +231,7 @@ export function createAgent(
 ) {
   const allSkillNames = allSkills.map((s) => s.name);
 
-  const llm = (tools: StructuredToolInterface[]) => {
+  const llm = (tools: StructuredToolInterface[], thinking: ThinkingLevel) => {
     const { apiKey, authToken } = anthropicAuth();
     if (!apiKey && !authToken) {
       throw new Error(
@@ -240,8 +240,10 @@ export function createAgent(
     }
     const chat = new ChatAnthropic({
       model: MODEL,
-      maxTokens: 4096,
-      topP: TOP_P,
+      maxTokens: 16_384,
+      // Adaptive thinking + effort. topP/temperature are rejected while thinking is on.
+      thinking: { type: "adaptive" },
+      outputConfig: { effort: thinking },
       ...(apiKey
         ? { apiKey }
         : {
@@ -405,6 +407,7 @@ export function createAgent(
       events: parent.events,
       maxRounds: MAX_SUBAGENT_ROUNDS,
       mode: parent.mode,
+      thinking: parent.thinking,
       subagent: { id, name: def.name },
     };
 
@@ -440,7 +443,7 @@ export function createAgent(
       rounds: Annotation<number>(),
     });
 
-    const model = llm(ctx.tools);
+    const model = llm(ctx.tools, ctx.thinking);
 
     async function callModel(state: typeof StateAnnotation.State) {
       const controller = new AbortController();
@@ -532,6 +535,7 @@ export function createAgent(
     const activeSkillNames = new Set(memory.getActiveSkills(sessionId, allSkillNames));
     const activeSkills = allSkills.filter((skill) => activeSkillNames.has(skill.name));
     const mode = memory.getMode(sessionId);
+    const thinking = memory.getThinking(sessionId);
     const parentSubagents = subagentsForMode(allSubagents, mode);
     const tools = buildTools(activeSkills, sessionId, {
       allowedTools: mode === "plan" ? PLAN_PARENT_TOOLS : undefined,
@@ -556,6 +560,7 @@ export function createAgent(
             persistFinal: true,
             events,
             mode,
+            thinking,
             maxRounds: MAX_TOOL_ROUNDS,
           },
           initialMessages,

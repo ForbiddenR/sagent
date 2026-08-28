@@ -34,6 +34,9 @@ export interface ClientMessage {
 }
 
 export type SessionMode = "build" | "plan";
+export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+export const THINKING_LEVELS: ThinkingLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 export interface SessionSummary {
   id: string;
@@ -43,10 +46,15 @@ export interface SessionSummary {
   messageCount: number;
   activeSkills: string[];
   mode: SessionMode;
+  thinking: ThinkingLevel;
 }
 
 function normalizeMode(mode: unknown): SessionMode {
   return mode === "plan" ? "plan" : "build";
+}
+
+export function normalizeThinking(level: unknown): ThinkingLevel {
+  return THINKING_LEVELS.includes(level as ThinkingLevel) ? (level as ThinkingLevel) : "high";
 }
 
 interface SessionRecord {
@@ -58,6 +66,7 @@ interface SessionRecord {
   clientMessages: ClientMessage[];
   activeSkills: Set<string>;
   mode: SessionMode;
+  thinking: ThinkingLevel;
 }
 
 interface PersistedSessionRecord {
@@ -68,6 +77,7 @@ interface PersistedSessionRecord {
   clientMessages: ClientMessage[];
   activeSkills: string[];
   mode?: SessionMode;
+  thinking?: ThinkingLevel;
 }
 
 interface PersistedSessionStore {
@@ -142,6 +152,7 @@ class SessionStore {
       clientMessages: [],
       activeSkills: new Set(allSkillNames),
       mode: "build",
+      thinking: "high",
     };
     this.sessions.set(id, record);
     this.persistSoon();
@@ -161,6 +172,7 @@ class SessionStore {
         clientMessages: [],
         activeSkills: new Set(allSkillNames),
         mode: "build",
+        thinking: "high",
       };
       this.sessions.set(sessionId, record);
       this.persistSoon();
@@ -250,6 +262,18 @@ class SessionStore {
     return this.toSummary(record);
   }
 
+  getThinking(sessionId: string): ThinkingLevel {
+    return this.ensureSession(sessionId).thinking;
+  }
+
+  setThinking(sessionId: string, thinking: ThinkingLevel): SessionSummary {
+    const record = this.ensureSession(sessionId);
+    record.thinking = normalizeThinking(thinking);
+    record.updatedAt = new Date().toISOString();
+    this.persistSoon();
+    return this.toSummary(record);
+  }
+
   enableSkillForAll(skillName: string): void {
     for (const record of this.sessions.values()) {
       record.activeSkills.add(skillName);
@@ -288,6 +312,7 @@ class SessionStore {
           clientMessages,
           activeSkills: new Set(session.activeSkills ?? []),
           mode: normalizeMode(session.mode),
+          thinking: normalizeThinking(session.thinking),
         });
       }
     } catch (err) {
@@ -311,6 +336,7 @@ class SessionStore {
         clientMessages: record.clientMessages,
         activeSkills: [...record.activeSkills].sort(),
         mode: record.mode,
+        thinking: record.thinking,
       })),
     };
 
@@ -326,6 +352,7 @@ class SessionStore {
       messageCount: record.clientMessages.length,
       activeSkills: [...record.activeSkills].sort(),
       mode: record.mode,
+      thinking: record.thinking,
     };
   }
 }

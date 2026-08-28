@@ -36,6 +36,9 @@ export interface Message {
 }
 
 export type SessionMode = "build" | "plan";
+export type ThinkingLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+export const THINKING_LEVELS: ThinkingLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 export interface SessionSummary {
   id: string;
@@ -45,6 +48,7 @@ export interface SessionSummary {
   messageCount: number;
   activeSkills: string[];
   mode: SessionMode;
+  thinking: ThinkingLevel;
 }
 
 export interface SessionFile {

@@ -158,6 +158,24 @@ const server = Bun.serve({
       },
     },
 
+    "/api/sessions/:id/thinking": {
+      GET(req) {
+        const id = requireSession(req.params.id);
+        return json({ thinking: id ? memory.getThinking(id) : "high" });
+      },
+      async POST(req) {
+        const id = requireSession(req.params.id);
+        const body = (await req.json().catch(() => ({}))) as { thinking?: string };
+        if (!id) return json({ error: "session not found" }, 404);
+        const allowed = ["low", "medium", "high", "xhigh", "max"] as const;
+        if (!allowed.includes(body.thinking as (typeof allowed)[number])) {
+          return json({ error: "thinking must be 'low', 'medium', 'high', 'xhigh', or 'max'" }, 400);
+        }
+        const session = memory.setThinking(id, body.thinking as (typeof allowed)[number]);
+        return json({ session, thinking: session.thinking });
+      },
+    },
+
     "/api/sessions/:id/skills": {
       GET(req) {
         const id = requireSession(req.params.id);

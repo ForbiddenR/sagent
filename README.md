@@ -11,10 +11,13 @@ demonstrates a few things in a minimal, readable way:
   to spawn a specialized worker (`general`, `explore`, or a custom
   `agents/<name>/AGENT.md`) with a fresh context. Independent `task` calls in
   one turn run in parallel; only the subagent's final answer returns to the parent.
-- **Plan mode** — OpenCode-style primary mode. Toggle Plan / Build on the session.
-  Plan is read-only (`write_file` and `run_bash` off; `task` may only spawn
+- **Plan mode** — OpenCode-style primary mode. Toggle Plan / Build on the input
+  bar. Plan is read-only (`write_file` and `run_bash` off; `task` may only spawn
   read-only workers like `explore`). Switch to Build to implement the plan. The
   conversation stays in the same session.
+- **Thinking level** — Claude adaptive thinking (`output_config.effort`). Toggle
+  Low / Med / High / xHigh / Max on the input bar. Higher effort thinks more
+  before answering (slower, better on hard tasks). Default is High.
 - **Memory** — conversation history per session id, **persisted to `.sessions.json`**
   so sessions survive server restarts.
 - **Agent loop** — a LangGraph `StateGraph` (`model` → `tools` → `model` …) with
@@ -84,6 +87,8 @@ Open http://localhost:3000.
 - **Plan mode**: toggle **Plan** on the input bar, then ask “plan how to add a notes
   file in the workspace.” The reply is a numbered plan; writes stay blocked until
   you switch back to **Build**.
+- **Thinking**: set Low / Med / High / xHigh / Max on the input bar. High is the
+  default; Max spends the most time reasoning.
 - **Timeouts**: if the model stops responding, the request is aborted after
   `MODEL_TIMEOUT_MS` and a “⏱ Request timed out — check the API” notice appears.
 - Restart the server → sessions and history are restored from `.sessions.json`.
@@ -93,7 +98,7 @@ Open http://localhost:3000.
 ```
 src/
   index.ts           Bun.serve — routes: "/" (HTML), /api/chat, /api/sessions,
-                     /api/skills, /api/subagents, /api/approvals, session mode, files & upload endpoints
+                     /api/skills, /api/subagents, /api/approvals, session mode/thinking, files & upload endpoints
   agent.ts           LangGraph StateGraph (model/tools nodes) + streaming + timeout
   memory.ts          SessionStore — sessions, enabled skills, messages (persisted)
   rag.ts             in-memory vector store backing search_workspace
@@ -164,7 +169,6 @@ All options are read from the environment (Bun auto-loads `.env`). See `.env.exa
 | `MODEL`               | `claude-opus-4-8`    | Any Claude model id (e.g. `claude-haiku-4-5` for cheaper/faster). |
 | `ANTHROPIC_BASE_URL`  | Anthropic API        | Optional. Point at an Anthropic-compatible endpoint (gateway/proxy, e.g. LiteLLM, Cloudflare AI Gateway, a corporate proxy). Must speak the Anthropic `/v1/messages` API. Leave unset for the default. |
 | `EXA_API_KEY`         | —                    | Optional. Higher rate limits for `web_search_exa` / `web_fetch_exa`. Without it, tools use Exa's hosted MCP at https://mcp.exa.ai/mcp (free, rate-limited). |
-| `TOP_P`               | `1`                  | Top-p sampling for the model. |
 | `MODEL_TIMEOUT_MS`    | `60000`              | Max ms to wait for the next model chunk before treating the request as timed out (a streaming response is not interrupted; only total silence trips it). Emits a timeout notification so the user knows to check the API. |
 | `MAX_MODEL_MESSAGES`  | `100`                | Max recent messages sent back to the model for context. Full frontend session messages are still persisted separately. |
 | `SESSION_STORE_FILE`  | `.sessions.json`     | Where persisted sessions are stored. |
@@ -182,7 +186,6 @@ ANTHROPIC_API_KEY=sk-ant-... \
 # or: ANTHROPIC_AUTH_TOKEN=... \
 MODEL=claude-opus-4-8 \
 ANTHROPIC_BASE_URL=https://gateway.example.com/anthropic \
-TOP_P=1 \
 MODEL_TIMEOUT_MS=60000 \
 MAX_MODEL_MESSAGES=100 \
 SESSION_STORE_FILE=.sessions.json \

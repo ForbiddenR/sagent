@@ -5,7 +5,7 @@ import { FileEditor } from "./components/FileEditor";
 import { Bubble, EmptyState } from "./components/Message";
 import { Sidebar } from "./components/Sidebar";
 import { SkillEditor } from "./components/SkillEditor";
-import type { AgentEvent, Message, SessionFile, SessionMode, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary } from "./types";
+import type { AgentEvent, Message, SessionFile, SessionMode, SessionSummary, Skill, SkillEditorState, SkillSummary, SubagentRun, SubagentStep, SubagentSummary, ThinkingLevel } from "./types";
 import { blankSkill, getJson } from "./utils";
 
 function appendRunText(run: SubagentRun, text: string): SubagentRun {
@@ -106,6 +106,19 @@ function useAgentPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ mode }),
+      },
+    );
+    setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? data.session : s)));
+  }
+
+  async function setThinking(thinking: ThinkingLevel) {
+    if (!activeSessionId) return;
+    const data = await getJson<{ session: SessionSummary; thinking: ThinkingLevel }>(
+      `/api/sessions/${activeSessionId}/thinking`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ thinking }),
       },
     );
     setSessions((prev) => prev.map((s) => (s.id === activeSessionId ? data.session : s)));
@@ -330,6 +343,7 @@ function useAgentPage() {
     deleteSession,
     resetSession,
     setMode,
+    setThinking,
     toggleSkill,
     openEditSkill,
     openCreateSkill,
@@ -380,7 +394,7 @@ function App() {
               <div>
                 <h1 className="text-sm font-semibold leading-tight">{state.activeSession?.title ?? "Agent"}</h1>
                 <p className="muted text-xs leading-tight">
-                  Bun · LangGraph · {(state.activeSession?.mode ?? "build") === "plan" ? "plan mode" : "build mode"} · {state.activeSession?.activeSkills.length ?? 0} skills enabled
+                  Bun · LangGraph · {(state.activeSession?.mode ?? "build") === "plan" ? "plan" : "build"} · {state.activeSession?.thinking ?? "high"} thinking · {state.activeSession?.activeSkills.length ?? 0} skills enabled
                 </p>
               </div>
             </div>
@@ -398,7 +412,9 @@ function App() {
             <Composer
               busy={state.busy}
               mode={state.activeSession?.mode ?? "build"}
+              thinking={state.activeSession?.thinking ?? "high"}
               onModeChange={state.setMode}
+              onThinkingChange={state.setThinking}
               onSend={state.send}
             />
           </footer>
